@@ -1,79 +1,38 @@
-"""Serialized CAS cells, durable replay state, and session budget ownership."""
+"""Serialized CAS cells, durable replay state, and session budget ownership.
+
+A session is the policy over two owners beside it: `journal.CellJournal`, the
+durable log, and `exchange.CellExchange`, the kernel and the stops aimed at it.
+What is decided here is what a cell means -- whether it may be built on, how a
+dead kernel is rebuilt and whether the rebuild can be trusted, and what the
+session has spent.
+"""
 from __future__ import annotations
 
 import contextlib
-import json
-import math
-import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import ValidationError
-
 from hardy.algebra.backends import CasBackend
 from hardy.algebra.contracts import (
-    _ASKED,
-    _INSISTED,
-    INTERRUPTED,
     SOURCE_LIMIT_BYTES,
-    TIMED_OUT,
     Author,
     CasError,
     CellOutcome,
     CellRecord,
-    ReadFailure,
     RebuildReport,
     ReplayCheck,
     _why_unverified,
     check_replay,
 )
+from hardy.algebra.exchange import CellExchange
+from hardy.algebra.journal import CellJournal
 from hardy.algebra.kernel import Kernel
-from hardy.foundation.files import LayoutError, WriteGuard
-from hardy.foundation.locking import FileLock, LockTimeout
-from hardy.foundation.process import INTERRUPT_GRACE_SECONDS
+from hardy.foundation.files import LayoutError
 from hardy.workflows.contracts import RunLimits
-
-
-def _as_stopped(outcome: CellOutcome, *, signalled: bool, killed: bool) -> CellOutcome:
-    """A kernel's reply, corrected by what Hardy knows about stopping it.
-
-    `signalled` is whether Hardy signalled this cell, and `killed` whether it
-    killed the kernel while the cell was out. The stream alone can say neither.
-    """
-    if signalled:
-        outcome = outcome.model_copy(update={"signalled": True})
-    if killed:
-        # A reply read, from a kernel Hardy then killed: the driver answered
-        # -- most often the cell unrun, on the frame's stop -- before the kill
-        # landed. What it said still stands as the cell's result, but the
-        # kernel that said it is gone, and so is its namespace. Left `live`,
-        # the session would send the next cell to a dead process and record
-        # the toolchain as having fallen over.
-        outcome = outcome.model_copy(update={"kernel_lost": True})
-    if not signalled and outcome.status == "interrupted":
-        # The driver says it caught a `KeyboardInterrupt` and Hardy never sent
-        # one, so the cell raised it itself -- `raise KeyboardInterrupt` in the
-        # source, or a library that uses it to unwind. That is an ordinary
-        # failure of the cell, and recording it as a cancellation would put a
-        # user action nobody took into the durable log. The parent is the only
-        # side that can tell these apart: the driver has no idea where the
-        # signal came from.
-        return outcome.model_copy(update={"status": "error"})
-    if signalled and outcome.status != "ok":
-        # The kernel answered after being asked to stop, so it is alive and
-        # its namespace is intact -- but what it answered with is the cell
-        # failing, not the cell's result. A sentinel backend has no status of
-        # its own (`classify` is Hardy's own inference from an error banner),
-        # and the driver's own word for this is already "interrupted"; either
-        # way the honest name for a cell the user stopped is that it was
-        # stopped. A cell that came back "ok" finished before the signal
-        # reached it and keeps its result.
-        return outcome.model_copy(update={"status": "interrupted"})
-    return outcome
 
 
 def _check_source(source: str) -> None:
@@ -207,16 +166,6 @@ class CasSession:
         self.backend = backend
         self.command = command
         self.log_path = log_path
-        # The only door the cell log is read or written through. It matters
-        # more here than anywhere else in Hardy: `cells.jsonl` is a versioned
-        # file a clone can ship as a symlink, and `_truncate_log` opens the log
-        # `r+b` and TRUNCATES it -- so a followed link would not merely append
-        # to whatever it named, it would destroy it. `Layout.ensure` cannot
-        # help: it runs once at startup and never enumerates this file.
-        #
-        # An unusable absent log remains constructible, but no kernel may run
-        # before its directory can be created and its writer lease acquired.
-        self._log = WriteGuard(log_path.parent)
         self.limits = limits
         self.cwd = cwd or log_path.parent
         self.observe = observe
@@ -229,145 +178,48 @@ class CasSession:
         # One stateful process behind one stdin stream, reachable from chat,
         # staged runs, and MCP. The lock belongs to the resource, not a caller.
         self._lock = threading.RLock()
-        self._kernel: Kernel | None = None
-        # Both read and written without the lock, on purpose: the thread that
-        # holds it is the one inside `execute`, waiting on the kernel, and that
-        # is precisely the thread an interrupt has to reach. An `Event` rather
-        # than a bool because these cross threads with no lock between them.
-        #
-        # `_in_flight` is what makes an interrupt safe to send at all. A signal
-        # delivered between cells lands on a driver blocked reading stdin,
-        # where it has no cell to abandon and nothing to answer with, so
-        # `interrupt` refuses unless a cell is actually out there.
-        self._in_flight = threading.Event()
-        self._interrupted = threading.Event()
-        # The window between the frame being built and the kernel having read
-        # it. The write is to a pipe, so a kernel that has stopped reading --
-        # the deaf one this whole change exists for -- lets a large enough cell
-        # fill the buffer and block it. Nothing is in flight yet, so `interrupt`
-        # has nothing to ask; but `escalate` does, because killing the kernel
-        # is what ends the write, and without that a session could hang there
-        # with no deadline running and no press that could reach it.
-        self._sending = threading.Event()
-        # Held across "write the frame and arm the flag" and across "decide
-        # whether to signal", so the two cannot interleave. Without it a press
-        # landing between the two reached a driver that was still idle: the
-        # signal was swallowed by the between-cells handler, the cell went out
-        # immediately afterwards, and the only press was already spent -- so
-        # the cell ran on until the grace expired and took the kernel with it,
-        # which is the exact loss interrupting exists to avoid.
-        self._signal_lock = threading.Lock()
-        # How hard a stop asked for while no cell was in flight was asked,
-        # remembered so the cell about to go out is stopped rather than the
-        # press being lost. A level rather than a flag for the same reason the
-        # register in `process` keeps one: if both presses land before the cell
-        # is sent, a flag would give it the first press's signal and lose the
-        # second, so a deaf cell would sit out a grace the user had already
-        # declined to wait for. Lifted by `resume`, at the start of the next
-        # turn or command, exactly as that register is.
-        self._stop_level = 0
-        self._shutting_down = False
-        # Whether Hardy itself killed the kernel during the cell in flight --
-        # the second press, in `escalate` or applied as the cell goes out.
-        # Hardy knows this; the stream cannot say it. A driver told by the
-        # frame to stop answers the cell unrun at once, and it can write that
-        # answer before the kill is delivered (Windows CI saw exactly this).
-        # The kill then waits for the process to exit, but the answer is
-        # already in the pipe and stays readable after the process is gone,
-        # and `read_reply` returns a complete reply before it looks at the
-        # stream's end. Read from the stream alone, that cell looks answered by
-        # a live kernel. The same holds for an `escalate` that lands just after
-        # a cell has answered. Cleared only as the next frame is built, so it
-        # still describes the last cell when `execute` words its record.
-        self._killed = False
-        self._records: list[CellRecord] = []
-        self._lease: FileLock | None = None
-        self._lease_identity: tuple[int, int] | None = None
+        self._exchange = CellExchange(backend, limits.cas_cell_seconds)
+        # An unusable absent log remains constructible, but no kernel may run
+        # before its directory can be created and its writer lease acquired.
+        self._journal = CellJournal(log_path)
         self._closed = False
         # The session's own figure: every second of CAS wall clock billed to
         # this log, across every process that has opened it. Read back from the
         # last record, which carries the running total as of its append, and
+        # from the spend sidecar, which also includes charges made after it;
         # moved with `spent_seconds` from then on. Reported, never enforced: a
         # research workspace may legitimately be open for months, and a
         # lifetime cap attached to it would eventually refuse work for reasons
         # that have nothing to do with the work.
-        #
-        # The sidecar also includes charges made after the last cell append.
-        self._spend_name = log_path.name + ".spend.json"
         self.total_spent_seconds = 0.0
         try:
-            self._load_owned_history()
+            self.total_spent_seconds = self._journal.own()
         except OSError:
             # Preserve lazy construction when the absent log's parent cannot
             # yet be created. The first operation retries before doing work.
             if self.log_path.exists():
                 raise
 
-    def _load_owned_history(self) -> None:
-        """Own the log before reading its history or repairing a torn tail.
-
-        Locking only an append cannot serialize two already-loaded histories:
-        their sequence numbers, spend, and live namespaces would still differ.
-        The OS lease therefore lasts until close, including between cells.
-        """
-        # A deferred session has never loaded history or owned a kernel. Its
-        # formerly unusable parent may now be a directory; prove it afresh.
-        self._log = WriteGuard(self.log_path.parent)
-        self._log.mkdir()
-        lease = FileLock(self._log.reserve(self.log_path.name + ".lock"), timeout=0)
-        try:
-            lease.__enter__()
-        except LockTimeout as error:
-            raise CasError(f"the CAS cell log cannot be owned ({self.log_path}): {error}") from error
-        try:
-            info = lease.path.stat()
-            self._lease_identity = (info.st_dev, info.st_ino)
-            self._records = self._load()
-            self._restore_spend()
-        except BaseException:
-            lease.__exit__(None, None, None)
-            raise
-        self._lease = lease
-
-    def _restore_spend(self) -> None:
-        recorded_spend = (
-            self._records[-1].spent_ms / 1_000 if self._records else 0.0
-        )
-        self.total_spent_seconds = max(recorded_spend, self._load_spend())
+    @property
+    def _kernel(self) -> Kernel | None:
+        return self._exchange.kernel
 
     def _require_owner(self) -> None:
-        if self._shutting_down:
+        if self._exchange.shutting_down:
             raise CasError("the CAS session is closing")
         if self._closed:
             raise CasError("the CAS session is closed; open a new session before running or writing")
         try:
-            if self._lease is None:
-                self._load_owned_history()
-            assert self._lease is not None
-            info = self._log.reserve(self._lease.path.name).stat()
-            if (info.st_dev, info.st_ino) != self._lease_identity:
-                raise CasError("the CAS writer lease was replaced; close and reopen the session")
+            if not self._journal.owned:
+                self.total_spent_seconds = self._journal.own()
+            self._journal.check_lease()
         except (OSError, CasError) as error:
             raise self._poisoned(
                 f"the CAS cell log could not be written ({self.log_path}): {error}"
             ) from error
 
-    def _load_spend(self) -> float:
-        try:
-            with self._log.open(self._spend_name, "r", encoding="utf-8") as stream:
-                value = json.load(stream)
-            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
-                raise ValueError("expected finite nonnegative seconds")
-            return float(value)
-        except (FileNotFoundError, NotADirectoryError):
-            # No sidecar exists. An unusable log parent is refused on write,
-            # just as it was before accounting was persisted separately.
-            return 0.0
-        except (OSError, ValueError, OverflowError) as error:
-            raise CasError(f"the CAS spend could not be read ({self._spend_name}): {error}") from error
-
     @contextlib.contextmanager
-    def hold(self):
+    def hold(self) -> Iterator[None]:
         """Keep the session to one caller for the duration.
 
         The lock is the kernel's, and `execute` takes it per cell. An export
@@ -383,188 +235,40 @@ class CasSession:
 
     # ------------------------------------------------------------------ log
 
-    def _load(self) -> list[CellRecord]:
-        if not self.log_path.exists():
-            return []
-        raw = self._repair_interrupted_append(self._read_log())
-        records = []
-        for line in raw.split(b"\n"):
-            # Bytes, not text: a torn write can cut a multi-byte character in
-            # half, and decoding the whole file first would fail on the very
-            # record this is here to survive.
-            if line.strip():
-                records.append(CellRecord.model_validate_json(line))
-        return records
-
-    def _repair_interrupted_append(self, raw: bytes) -> bytes:
-        """Heal a final record that a crash cut off mid-write.
-
-        Every append is one write of `record + "\\n"` followed by an fsync, so
-        a log that does not end in a newline ended in an append that did not
-        finish. That is the *only* damage tolerated here: a record with a
-        terminator behind it was durable, and a bad one is corruption that must
-        still be refused rather than quietly dropped.
-
-        The partial bytes are removed from the file, not merely skipped. The
-        log is appended to, so leaving them would glue the next record onto the
-        fragment and turn a one-off interruption into a line that is neither
-        final nor valid -- permanently unreadable, which is the failure this
-        exists to prevent.
-        """
-        if not raw or raw.endswith(b"\n"):
-            return raw
-        head, separator, tail = raw.rpartition(b"\n")
-        try:
-            CellRecord.model_validate_json(tail)
-        except ValidationError:
-            kept = head + separator
-            self._mend_log(truncate_to=len(kept))
-            return kept
-        # The record itself arrived; only its terminator was lost. Nothing is
-        # discarded -- the newline is supplied so the next append starts on its
-        # own line.
-        self._mend_log(truncate_to=None)
-        return raw + b"\n"
-
-    def _read_log(self) -> bytes:
-        """Every byte of the log, through the guard.
-
-        Reading is guarded as strictly as writing. A symlinked log read at load
-        time would have this session answer from cells recorded somewhere
-        outside the project entirely, and only notice when the first append was
-        refused -- long after it had replayed a stranger's history as its own.
-        """
-        with self._log.open(self.log_path.name, "rb") as stream:
-            return stream.read()
-
-    def _truncate_log(self, size: int) -> None:
-        with self._log.open(self.log_path.name, "r+b") as stream:
-            stream.truncate(size)
-            stream.flush()
-            os.fsync(stream.fileno())
-
-    def _terminate_log(self) -> None:
-        with self._log.open(self.log_path.name, "ab") as stream:
-            stream.write(b"\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-
-    def _mend_log(self, *, truncate_to: int | None) -> None:
-        """Write the repair to disk, or leave the file alone if it will not take it.
-
-        Best effort on purpose. This runs from `_load`, which runs from
-        `__init__`, so an `OSError` escaping here -- a read-only workspace, a
-        full disk -- would stop the session being constructed at all. That is
-        the same startup failure a torn record used to cause, arriving by a
-        different route, and this method exists to fix that failure rather than
-        to relocate it.
-
-        A log that can be read but not repaired still opens: the fragment is
-        skipped in memory, and `_append` redoes the repair before it writes,
-        which is where refusing it turns into a poisoned session rather than
-        into a record glued onto a fragment.
-        """
-        with contextlib.suppress(OSError):
-            if truncate_to is None:
-                self._terminate_log()
-            else:
-                self._truncate_log(truncate_to)
-
-    def _ensure_terminated(self) -> None:
-        """Leave the log ending on a record boundary, or raise `OSError`.
-
-        `_mend_log` swallows the failure it may hit, so a repair that the
-        filesystem refused at load time exists only in memory: `_load` returns
-        the healed bytes while the file still ends mid-record. The old claim
-        that a filesystem refusing the repair would refuse the append too is
-        simply untrue for a transient failure -- ENOSPC, a quota freed a minute
-        later, an `fsync` that returned EINVAL once. The next append then lands
-        on the fragment and welds it into a line that is neither final nor
-        valid, which is exactly the permanently unreadable log
-        `_repair_interrupted_append` exists to prevent.
-
-        So the repair is redone here, where it is allowed to fail loudly: this
-        runs inside `_append`, whose caller has already decided that a log it
-        cannot write means a poisoned session rather than a silent one.
-        """
-        try:
-            size = self.log_path.stat().st_size
-        except FileNotFoundError:
-            return
-        if not size:
-            return
-        with self._log.open(self.log_path.name, "rb") as stream:
-            stream.seek(-1, os.SEEK_END)
-            if stream.read(1) == b"\n":
-                return
-        # Same rule as at load: a well-formed final record lost only its
-        # terminator and is kept, anything else is a fragment and goes. The
-        # whole file is read only on this path, which is the damaged one.
-        head, separator, tail = self._read_log().rpartition(b"\n")
-        try:
-            CellRecord.model_validate_json(tail)
-        except ValidationError:
-            self._truncate_log(len(head + separator))
-        else:
-            self._terminate_log()
-
     def _append(self, record: CellRecord) -> CellRecord:
         """Publish a record, durably first and only then in memory.
 
-        The order matters in a long-lived server. A record added to `_records`
-        before the write succeeded numbers and anchors everything after it, so
-        a workspace that filled up or went read-only would keep answering from
-        a history that a restart cannot reconstruct. If the log cannot be
-        written the cell has already run, so what the kernel holds is no longer
-        described by anything durable: the session is poisoned rather than
-        allowed to continue on state it can never explain.
+        If the log cannot be written the cell has already run, so what the
+        kernel holds is no longer described by anything durable: the session
+        is poisoned rather than allowed to continue on state it can never
+        explain.
         """
         self._require_owner()
         try:
-            # Through the guard, which re-proves the directory and re-pins it
-            # if it had to be recreated: a session whose workspace was deleted
-            # underneath it must still be able to record the cell that just
-            # ran, and the fresh directory has a fresh inode.
-            self._log.mkdir()
-            self._ensure_terminated()
-            with self._log.open(self.log_path.name, "ab") as stream:
-                stream.write(record.model_dump_json().encode("utf-8") + b"\n")
-                stream.flush()
-                os.fsync(stream.fileno())
+            self._journal.append(record)
         except OSError as error:
             raise self._poisoned(
                 f"the CAS cell log could not be written ({self.log_path}): {error}. "
                 "The session is poisoned because its live state is no longer recorded. "
                 "Reset it to start clean."
             ) from None
-        self._records.append(record)
         if self.observe is not None:
             self.observe({"type": "cas", "record": record.model_dump(mode="json")})
         return record
 
     def records(self) -> tuple[CellRecord, ...]:
         """Every durable record, boundaries included."""
-        return tuple(self._records)
+        return tuple(self._journal.records)
 
     @property
     def segment(self) -> int:
-        return max((record.segment for record in self._records), default=0)
+        return self._journal.segment
 
     def accepted(self) -> tuple[CellRecord, ...]:
-        segment = self.segment
-        return tuple(
-            record
-            for record in self._records
-            if record.accepted and record.segment == segment and record.source.strip()
-        )
+        return self._journal.accepted()
 
     def cells(self) -> tuple[CellRecord, ...]:
-        segment = self.segment
-        return tuple(
-            record
-            for record in self._records
-            if record.segment == segment and record.source.strip()
-        )
+        return self._journal.cells()
 
     # -------------------------------------------------------------- kernel
 
@@ -583,12 +287,7 @@ class CasSession:
                 f"could not start the {self.backend.name} kernel "
                 f"({' '.join(argv)}): {error}"
             ) from None
-        with self._signal_lock:
-            closing = self._shutting_down
-            if not closing:
-                self._kernel = kernel
-        if closing:
-            kernel.kill(immediate=True)
+        if not self._exchange.adopt(kernel):
             raise CasError("the CAS session is closing")
         self.state = "live"
 
@@ -609,8 +308,6 @@ class CasSession:
         against a record it already has, so it must not write one of its own.
         """
         with self._lock:
-            if self._kernel is None:
-                raise CasError("no CAS kernel is running to replay into")
             return self._send(source, seconds)
 
     def remove_log(self) -> None:
@@ -620,7 +317,7 @@ class CasSession:
         is never deleted. Removed by the same proven directory it was written
         through, not by a path rebuilt somewhere that nothing re-checks.
         """
-        self._log.unlink(self.log_path.name, missing_ok=True)
+        self._journal.remove()
 
     def probe_version(self) -> str:
         """Ask the kernel what it is, in a kernel that is then thrown away.
@@ -663,239 +360,27 @@ class CasSession:
         must not be able to buy a full cell's worth of wall clock with it.
         """
         limit = self.limits.cas_cell_seconds if seconds is None else seconds
-        kernel = self._kernel
-        assert kernel is not None
-        nonce = f"{time.monotonic_ns():x}"
-        self.backend.arm(kernel, nonce)
-        frame, sent = self._deliver(kernel, source, nonce)
-        try:
-            if not sent:
-                return self._undelivered(kernel)
-            deadline = time.monotonic() + limit
-            # The frame, not the source: an echoing interpreter echoes the
-            # sentinel statements bracketing the cell as readily as the cell
-            # itself, and a multi-line cell's second line onward comes back
-            # under a continuation indent rather than a prompt of its own.
-            fed = frame.decode("utf-8", errors="replace")
-            reply = kernel.read_reply(
-                self.backend.extractor(kernel, nonce, fed), deadline, self._interrupted
-            )
-        finally:
-            # Both under the lock `interrupt` takes, so a press either lands
-            # before this (and is recorded against the cell) or finds nothing
-            # in flight and is not. Read here rather than at the bottom of the
-            # method: between the reply arriving and this line, a press is
-            # still aimed at a cell nobody could yet know was over, and it is
-            # resolved conservatively -- the cell is recorded and reported, and
-            # simply not accepted, which costs a rerun rather than correctness.
-            with self._signal_lock:
-                signalled = self._interrupted.is_set()
-                killed = self._killed
-                self._in_flight.clear()
-        if not isinstance(reply, tuple):
-            return self._unanswered(kernel, reply, limit)
-        outcome, consumed = reply
-        self.backend.release(kernel, consumed)
-        return _as_stopped(outcome, signalled=signalled, killed=killed)
-
-    def _deliver(self, kernel: Kernel, source: str, nonce: str) -> tuple[bytes, bool]:
-        """Write the cell's frame, and spend any stop asked for before it went out.
-
-        Returns the frame and whether the kernel took all of it.
-        """
-        # The frame is built inside the lock, below, because the bit it carries
-        # is the stop level: read outside, a press landing between the read and
-        # the lock would be recorded while the frame already said no stop was
-        # wanted -- and the driver, told that, would discard the very signal
-        # that press sent.
-        with self._signal_lock:
-            # Cleared before the cell is out there, and only then armed: an
-            # interrupt asked for while nothing was running would otherwise
-            # stop the *next* cell, which nobody asked to stop.
-            self._interrupted.clear()
-            self._killed = False
-            stopping = self._stop_level > 0
-            frame = self.backend.frame(source, nonce, stopping=stopping)
-            self._sending.set()
-        # Outside the lock. `write` to a full pipe blocks until the kernel
-        # reads, and `interrupt` and `escalate` are called from the terminal's
-        # own event loop -- so holding the lock across the write would let a
-        # kernel that has stopped reading freeze the interface, with the cell's
-        # deadline not yet running and the one press that could end it unable
-        # to be delivered. A press landing in this window is remembered in
-        # `_stop_level` and spent below, at the level it was asked at.
-        sent = kernel.send(frame)
-        with self._signal_lock:
-            self._sending.clear()
-            self._in_flight.set()
-            # A stop asked for before this cell existed still applies to it:
-            # the press was aimed at the work, and the work is now this. It
-            # goes out here, under the lock, at the level it was asked at --
-            # a second press that landed before the cell did still means kill
-            # rather than ask.
-            #
-            # For the driver protocol the frame itself carried the stop
-            # (`stopping`), and the driver answers the cell unrun on that word
-            # alone, so no signal follows it: one sent as well would be the
-            # race this exists to close -- a signal that is late or lost lets
-            # the cell run to its deadline, and one that lands after the
-            # driver has already answered arrives with no cell to abandon.
-            # The signal still goes out when the press landed while the frame
-            # was being written (the frame then says no stop was in force,
-            # and the signal is the only carrier left), and for a sentinel
-            # backend, whose frame carries nothing.
-            if self._stop_level and sent:
-                self._interrupted.set()
-                if self._stop_level >= _INSISTED:
-                    self._killed = True
-                    kernel.kill(immediate=True)
-                elif not (stopping and self.backend.frame_carries_stop):
-                    kernel.interrupt()
-        return frame, sent
-
-    def _undelivered(self, kernel: Kernel) -> CellOutcome:
-        """The outcome of a frame the kernel did not take all of."""
-        if self._interrupted.is_set():
-            # The write failed because the second press killed the kernel out
-            # from under it -- which is what ends a write to a kernel that has
-            # stopped reading. Hardy stopped this, so the record says so;
-            # `kernel_died` would blame the toolchain for what Esc did.
-            return self.backend.partial(kernel, CellOutcome(
-                status="interrupted",
-                stderr="the frame was not completely delivered; it was stopped and its state is gone",
-                kernel_lost=True,
-                signalled=True,
-            ))
-        return self.backend.partial(
-            kernel, CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
-        )
-
-    def _unanswered(self, kernel: Kernel, failure: ReadFailure | None, limit: float) -> CellOutcome:
-        """The outcome of a cell whose reply never arrived, by why it did not."""
-        if failure is INTERRUPTED:
-            # Asked to stop and did not answer within the grace. Whatever it is
-            # doing, it is not talking, and a kernel that cannot be spoken to
-            # cannot be replayed from or built on -- so it goes, exactly as a
-            # timed-out one does. This is the case the interrupt exists to
-            # avoid, not the one it produces when it works.
-            return self.backend.partial(kernel, CellOutcome(
-                status="interrupted",
-                stderr=(
-                    "the cell was interrupted and the kernel did not answer within "
-                    f"{INTERRUPT_GRACE_SECONDS:g}s, so it was stopped and its state is gone"
-                ),
-                kernel_lost=True,
-            ))
-        if failure is TIMED_OUT:
-            return self.backend.partial(kernel, CellOutcome(
-                status="timeout",
-                stderr=(
-                    f"the session budget ended this cell after {limit:g}s"
-                    if limit < self.limits.cas_cell_seconds
-                    else f"cell exceeded its {limit:g}s limit"
-                ),
-            ))
-        # The stream ended, or desynchronised. One that desynchronised cannot
-        # be trusted to be answering the cell we sent, so it is a death rather
-        # than a bad answer.
-        if self._interrupted.is_set():
-            # Died *because* it was signalled. Not every interpreter turns an
-            # interrupt into a traceback it can report -- one still starting
-            # up has no handler installed yet, and a REPL may simply exit --
-            # and a kernel Hardy stopped must not be recorded as one that fell
-            # over on its own. The state is gone either way; what changes is
-            # which cause the record names.
-            return self.backend.partial(kernel, CellOutcome(
-                status="interrupted",
-                stderr="the cell was interrupted and the kernel did not survive it, so its state is gone",
-                kernel_lost=True,
-            ))
-        return self.backend.partial(
-            kernel, CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
-        )
+        return self._exchange.send(source, limit)
 
     def interrupt(self) -> bool:
-        """Stop the cell in flight without stopping the kernel.
+        """Stop the cell in flight without stopping the kernel; from any thread.
 
-        Callable from any thread. Takes `_signal_lock` but never `_lock` -- the
-        latter is held by the thread inside `execute`, which is the thread this
-        exists to reach, and waiting for it would deadlock against the very
-        cell being stopped.
-
-        Reports whether a cell was actually running to be stopped, so the
-        terminal can say what it did rather than claiming to have stopped
-        something that was not there. A press that finds nothing is still
-        remembered: the cell it was aimed at may be a microsecond from going
-        out, and `_send` signals it as soon as it does.
-
-        There is still a window in which the cell finishes just as the signal
-        is sent, so the driver survives one arriving with no cell to abandon;
-        that is defence in depth, not the design.
+        Reports whether a cell was actually running to be stopped. See
+        `CellExchange.interrupt`.
         """
-        with self._signal_lock:
-            self._stop_level = max(self._stop_level, _ASKED)
-            if not self._in_flight.is_set():
-                return False
-            kernel = self._kernel
-            if kernel is None:
-                return False
-            # Set before the signal, not after: the reader must never see a
-            # kernel that has already answered the interrupt while the flag
-            # that explains the answer is still clear.
-            self._interrupted.set()
-            return kernel.interrupt()
+        return self._exchange.interrupt()
 
     def resume(self) -> None:
-        """Lift a remembered stop, so the next turn's cells may run.
-
-        The counterpart of `process.resume_children`, called at the same
-        moment and for the same reason: a stop that outlived the turn it
-        belonged to would interrupt the next turn's first cell on sight.
-        """
-        with self._signal_lock:
-            if not self._shutting_down:
-                self._stop_level = 0
+        """Lift a remembered stop, so the next turn's cells may run."""
+        self._exchange.resume()
 
     def escalate(self) -> bool:
         """Stop waiting for the interrupt to be answered, and stop the kernel.
 
-        The second Esc. An interrupt is a request, and a cell deep in a library
-        that never returns to its interpreter will not hear it; this is the way
-        out of waiting for an answer that is not coming. It costs exactly what
-        the timeout costs -- the namespace -- which is why it is the second
-        press and not the first.
-
-        Like `interrupt`, takes `_signal_lock` but never `_lock`, and refuses
-        when nothing is running: killing an idle kernel would leave the session
-        holding a dead child it still believed in. The stop is remembered
-        either way, so a cell about to go out is stopped rather than the press
-        being lost.
-
-        A cell still being *written* counts as running here, though `interrupt`
-        refuses it: a kernel that has stopped reading blocks the write with no
-        deadline yet running, and killing it is what ends that write. There is
-        nothing for the first press to ask of a kernel that is not listening,
-        and this is the press that does not ask.
+        The second Esc, from any thread; it costs the namespace. See
+        `CellExchange.escalate`.
         """
-        with self._signal_lock:
-            self._stop_level = _INSISTED
-            if not (self._in_flight.is_set() or self._sending.is_set()):
-                return False
-            kernel = self._kernel
-            if kernel is None:
-                return False
-            self._interrupted.set()
-            self._killed = True
-        # The reading thread sees both streams end, and -- because the flag is
-        # set -- records the cell as interrupted with the kernel lost, which is
-        # what happened. It drops the kernel itself when it gets there; nothing
-        # here touches `_kernel`, so the two threads cannot race over it.
-        #
-        # Straight to SIGKILL: this runs on the terminal's event loop, and the
-        # graceful teardown's two-second wait would freeze the UI for exactly
-        # as long as this press was made to avoid waiting.
-        kernel.kill(immediate=True)
-        return True
+        return self._exchange.escalate()
 
     def terminate_on_shutdown(self) -> None:
         """Kill even an idle kernel without waiting for the cell execution lock.
@@ -903,13 +388,7 @@ class CasSession:
         Console closure is process shutdown, rather than an interrupt that
         preserves the namespace. The normal close still releases the lease.
         """
-        with self._signal_lock:
-            self._shutting_down = True
-            self._stop_level = _INSISTED
-            self._killed = True
-            kernel = self._kernel
-        if kernel is not None:
-            kernel.kill(immediate=True)
+        self._exchange.shut_down()
 
     # -------------------------------------------------------------- budget
 
@@ -935,14 +414,10 @@ class CasSession:
             self.spent_seconds += seconds
             self.total_spent_seconds += seconds
             try:
-                self._log.mkdir()
-                self._log.write_bytes(
-                    self._spend_name,
-                    (json.dumps(self.total_spent_seconds, allow_nan=False) + "\n").encode("utf-8"),
-                )
+                self._journal.write_spend(self.total_spent_seconds)
             except (OSError, LayoutError) as error:
                 raise self._poisoned(
-                    f"the CAS spend could not be written ({self._spend_name}): {error}"
+                    f"the CAS spend could not be written ({self._journal.spend_name}): {error}"
                 ) from error
 
     def _cell_seconds(self) -> float:
@@ -959,7 +434,7 @@ class CasSession:
     def _foreign_backend(self) -> str | None:
         """The name on the live segment's records, if it is not this backend's."""
         segment = self.segment
-        for record in self._records:
+        for record in self._journal.records:
             if record.segment == segment and record.backend and record.backend != self.backend.name:
                 return record.backend
         return None
@@ -1006,14 +481,12 @@ class CasSession:
             # This cell's, not a later one's: `_lock` keeps any other `_send`
             # from clearing it, and `escalate` can no longer set it once
             # `_send` has cleared `_in_flight`.
-            with self._signal_lock:
-                killed = self._killed
-            judgement = _judge(outcome, self.backend, killed=killed)
+            judgement = _judge(outcome, self.backend, killed=self._exchange.last_cell_killed())
             kernel_lost = outcome.kernel_lost or outcome.status in {"timeout", "kernel_died"}
             if kernel_lost:
                 self._drop_kernel()
             record = CellRecord(
-                seq=len(self._records),
+                seq=len(self._journal.records),
                 segment=self.segment,
                 author=author,
                 source=source,
@@ -1057,9 +530,7 @@ class CasSession:
         return note
 
     def _drop_kernel(self) -> None:
-        if self._kernel is not None:
-            self._kernel.kill()
-        self._kernel = None
+        self._exchange.drop()
         self.state = "dead"
 
     def _poisoned(self, message: str) -> CasError:
@@ -1074,9 +545,7 @@ class CasSession:
 
     def _discard_kernel(self) -> None:
         """Close a kernel that nothing died in, leaving the session cold."""
-        if self._kernel is not None:
-            self._kernel.kill()
-        self._kernel = None
+        self._exchange.drop()
         if self.state != "poisoned":
             self.state = "cold"
 
@@ -1182,7 +651,7 @@ class CasSession:
             self.state = "cold"
             self._append(
                 CellRecord(
-                    seq=len(self._records),
+                    seq=len(self._journal.records),
                     segment=self.segment + 1,
                     author=author,
                     source="",
@@ -1200,12 +669,6 @@ class CasSession:
                 return
             self._closed = True
             try:
-                if self._kernel is not None:
-                    self._kernel.kill()
+                self._exchange.drop()
             finally:
-                self._kernel = None
-                if self._lease is not None:
-                    self._lease.__exit__(None, None, None)
-                    self._lease = None
-
-
+                self._journal.release()

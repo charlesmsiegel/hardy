@@ -851,7 +851,7 @@ def test_failed_spend_write_refuses_further_work(cas_session, monkeypatch) -> No
     def full_disk(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(session._log, "write_bytes", full_disk)
+    monkeypatch.setattr(session._journal._guard, "write_bytes", full_disk)
     with pytest.raises(CasError, match="spend could not be written"):
         session.charge(12.5)
     assert session.total_spent_seconds == 12.5
@@ -1186,7 +1186,7 @@ def test_version_probe_bills_start_and_cell(cas_session, monkeypatch) -> None:
         session.probe_version()
         assert session.spent_seconds == pytest.approx(0.75)
         assert session.total_spent_seconds == pytest.approx(0.75)
-        assert json.loads(session.log_path.with_name(session._spend_name).read_text()) == pytest.approx(0.75)
+        assert json.loads(session.log_path.with_name(session._journal.spend_name).read_text()) == pytest.approx(0.75)
         assert session._kernel is None
     finally:
         session.close()

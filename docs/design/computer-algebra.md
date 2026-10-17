@@ -60,7 +60,7 @@ Persistence is also why a running cell is interrupted rather than timed out. A
 cell sent under the wrong monomial ordering can run far longer than intended,
 and killing the kernel to stop it discards every value the session accumulated,
 paying for one mistaken cell with all of them. Esc signals the child instead
-(`algebra/session.py`, through `foundation/process.py`), and the driver answers
+(`algebra/exchange.py`, through `foundation/process.py`), and the driver answers
 the signal rather than dying, so the cell stops and the namespace stands. What
 that cannot promise is obedience: a cell inside a C loop that never returns to
 its interpreter does not see the signal, so an interrupt unanswered within a
@@ -99,7 +99,7 @@ in the scratch trees an export empties.
 Every line of the journal is a `CellRecord` (`algebra/contracts.py`). `reset`
 deletes nothing and appends no marker of a different shape: it appends one more
 `CellRecord` carrying an incremented `segment`, and `accepted()` filters to the
-highest segment (`algebra/session.py`). A reset therefore survives a process
+highest segment (`algebra/journal.py`). A reset therefore survives a process
 restart, because the segment is persisted on every record rather than inferred
 from a sentinel line, and the history of a session that went wrong stays
 readable rather than being edited away.
@@ -110,7 +110,11 @@ against `cas_session_seconds`.
 ## One lock, in the session
 
 The kernel is one stateful process behind one stdin stream, so the lock lives
-in `CasSession` (`algebra/session.py`) rather than in any binding.
+in `CasSession` (`algebra/session.py`) rather than in any binding. Stops are the
+exception, by design: Esc arrives on another thread while the cell's own thread
+holds that lock waiting on the kernel, so the cell in flight and the stops aimed
+at it have a lock of their own (`algebra/exchange.py`) that the session's lock
+never waits on.
 The interactive workflow has a tool gate of its own
 (`workflows/interactive/turns.py`), but the staged workflow and the MCP server
 have nothing equivalent, and concurrent callers would interleave frames and
@@ -119,7 +123,8 @@ call, so all three bindings inherit that for free. A cell typed at `/cas` goes
 into the same log under the same lock as a cell the model runs.
 
 A second lock is about processes rather than threads: the journal is held under
-an OS file lease for the session's lifetime (`foundation/locking.py`), so two
+an OS file lease for the session's lifetime (`algebra/journal.py`, through
+`foundation/locking.py`), so two
 Hardy processes cannot write one journal. The lease is idempotent and terminal
 on close, a crash releases it, and deferred kernel setup does not silently
 forfeit it.
