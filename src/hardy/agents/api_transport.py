@@ -43,7 +43,7 @@ class ApiProvider:
         if timeout is None:
             return self._send(request)
         outcome: dict[str, Any] = {}
-        def call():
+        def call() -> None:
             try:
                 outcome["reply"] = self._send(request)
             except BaseException as error:  # noqa: BLE001 - re-raised on the caller's thread

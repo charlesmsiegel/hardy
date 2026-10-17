@@ -54,6 +54,9 @@ class TurnEvent:
 
 
 class ChatRuntime(Protocol):
+    """What a session or a batch run converses through: one exchange at a
+    time, streamed or blocking, cancellable from any thread."""
+
     model: str
     def stream(self, text: str) -> Iterator[TurnEvent]: ...
     def ask(self, text: str) -> str: ...
@@ -149,7 +152,7 @@ def final_text(events: Iterable[TurnEvent]) -> str:
     return reply
 
 
-def provenance(runtime: Any) -> dict[str, Any]:
+def provenance(runtime: ChatRuntime) -> dict[str, Any]:
     """What produced a turn: the model alone does not identify the provider.
 
     The same `claude-opus-5` answered by Anthropic and by an OpenAI-compatible
