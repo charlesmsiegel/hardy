@@ -135,7 +135,7 @@ export default function Landing({status, projects, setProjects, refreshProjects}
         )}
       </div>
 
-      <div className="wb-cols3">
+      <div className="wb-cols3 wb-cols3--forms">
         <div className="wb-card">
           <Label>New project</Label>
           <input

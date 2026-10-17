@@ -1473,8 +1473,16 @@ select.picker {
    window gives pages anywhere from 470px to 950px, and a fixed three columns
    under a window query was either cramped or collapsed too early. */
 .wb-cols3 {
+  --cols3-min: 200px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--cols3-min)), 1fr));
+}
+
+/* A row of forms needs more than a row of facts: at 200px a field's
+   placeholder ("path to a Hardy project, or a folder") is cut off, so the
+   row wraps to two columns sooner. */
+.wb-cols3--forms {
+  --cols3-min: 300px;
 }
 
 @media (max-width: 1280px) {

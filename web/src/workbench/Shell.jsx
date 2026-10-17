@@ -148,20 +148,27 @@ export default function Shell() {
     />
   );
 
+  // One top bar for all three shapes below, for the reason `sidebar` is one:
+  // a prop dropped at one of three copies would be a control that works
+  // everywhere but the shape nobody tested.
+  const topBar = (
+    <TopBar
+      status={status}
+      runningTool={runningTool}
+      projects={projects}
+      setProjects={setProjects}
+      refreshProjects={refreshProjects}
+      revision={revision}
+      waiting={prompts.length}
+      onStop={cancel}
+      go={go}
+    />
+  );
+
   if (!loaded) {
     return (
       <div className="wb-shell">
-        <TopBar
-          status={status}
-          runningTool={runningTool}
-          projects={projects}
-          setProjects={setProjects}
-          refreshProjects={refreshProjects}
-          revision={revision}
-          waiting={prompts.length}
-          onStop={cancel}
-          go={go}
-        />
+        {topBar}
         {sidebar(true)}
         <div className="wb-split" style={{gridTemplateColumns: 'minmax(0,1fr)'}}>
           <div className="wb-page">
@@ -177,17 +184,7 @@ export default function Shell() {
   if (empty) {
     return (
       <div className="wb-shell">
-        <TopBar
-          status={status}
-          runningTool={runningTool}
-          projects={projects}
-          setProjects={setProjects}
-          refreshProjects={refreshProjects}
-          revision={revision}
-          waiting={prompts.length}
-          onStop={cancel}
-          go={go}
-        />
+        {topBar}
         {sidebar(true)}
         <div className="wb-split" style={{gridTemplateColumns: 'minmax(0,1fr)'}}>
           <div className="wb-page">
@@ -206,17 +203,7 @@ export default function Shell() {
 
   return (
     <div className="wb-shell">
-      <TopBar
-        status={status}
-        runningTool={runningTool}
-        projects={projects}
-        setProjects={setProjects}
-        refreshProjects={refreshProjects}
-        revision={revision}
-        waiting={prompts.length}
-        onStop={cancel}
-        go={go}
-      />
+      {topBar}
       {sidebar(false)}
       <div className="wb-split" style={{gridTemplateColumns: bodyCols}}>
         {pageContent !== null ? <div className="wb-page">{pageContent}</div> : null}

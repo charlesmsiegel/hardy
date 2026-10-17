@@ -132,6 +132,10 @@ test('the current entry keeps its cue when colours are forced, and hover does no
 test('a three-card row wraps by the width its page has, not the window\'s', () => {
   // Beside the page sit a sidebar (open or a rail) and a dock (pinned or not),
   // so the same window gives pages of very different widths.
-  assert.match(rule('.wb-cols3'), /repeat\(auto-fit,\s*minmax\(min\(100%,\s*\d+px\),\s*1fr\)\)/);
+  assert.match(rule('.wb-cols3'), /repeat\(auto-fit,\s*minmax\(min\(100%,\s*var\(--cols3-min\)\),\s*1fr\)\)/);
+  assert.match(rule('.wb-cols3'), /--cols3-min:\s*\d+px/);
   assert.deepEqual(narrowedAt('.wb-cols3', 'grid-template-columns'), [], 'no window query forces it to one column');
+  // A row of forms (Landing) needs more per column than a row of facts, or a field's placeholder is cut off.
+  const min = (selector) => Number(/--cols3-min:\s*(\d+)px/.exec(rule(selector))?.[1]);
+  assert.ok(min('.wb-cols3--forms') > min('.wb-cols3'), 'the forms row wraps sooner than the facts row');
 });

@@ -48,10 +48,16 @@ const draw = (props) =>
     ),
   );
 const button = (text) => [...document.querySelectorAll('.wb-topbar button')].find((node) => node.textContent === text);
+const RUNNING = {...IDLE, turn_running: true};
+//: Every test starts from an idle bar, so the Stop button a previous test left
+//: mounted (and in whatever phase) is gone, as it is when a run ends.
+const fresh = () => draw({});
+const wait = (ms) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
 
 test('Stop is drawn while a turn runs and stops it once per press', async () => {
+  await fresh();
   let stops = 0;
-  await draw({status: {...IDLE, turn_running: true}, onStop: () => (stops += 1)});
+  await draw({status: RUNNING, onStop: () => (stops += 1)});
   const stop = button('Stop');
   assert.ok(stop, 'a running turn has a Stop button');
   assert.equal(stop.type, 'button');
@@ -61,18 +67,90 @@ test('Stop is drawn while a turn runs and stops it once per press', async () => 
 });
 
 test('Stop is drawn while a command runs and not otherwise', async () => {
+  await fresh();
   await draw({status: {...IDLE, command_running: true}});
   assert.ok(button('Stop'), 'a running command has a Stop button');
   await draw({});
   assert.equal(Boolean(button('Stop')), false, 'nothing running, nothing to stop');
 });
 
+test('a double click on Stop is one cancel, not a cancel and a kill', async () => {
+  await fresh();
+  let stops = 0;
+  const onStop = (...args) => {
+    assert.equal(args.length, 0, 'the click event is not passed on to the session');
+    stops += 1;
+  };
+  await draw({status: RUNNING, onStop, forceAfterMs: 10000});
+  const stop = button('Stop');
+  await act(() => stop.click());
+  await act(() => stop.click());
+  assert.equal(stops, 1, 'the second click of a double click reaches nothing');
+  const stopping = button('Stopping…');
+  assert.ok(stopping, 'the button says it is waiting');
+  assert.equal(stopping.disabled, true);
+  assert.equal(Boolean(button('Stop')), false);
+});
+
+test('a stop that has not worked offers to force it, once, and says what that costs', async () => {
+  await fresh();
+  let stops = 0;
+  await draw({status: RUNNING, onStop: () => (stops += 1), forceAfterMs: 30});
+  await act(() => button('Stop').click());
+  assert.equal(stops, 1);
+  await wait(80);
+  const force = button('Force stop');
+  assert.ok(force, 'after the delay the button offers to force the stop');
+  assert.equal(force.disabled, false);
+  assert.match(force.title, /kills/i);
+  assert.match(force.title, /computer algebra kernel/i, 'the title names what is lost');
+  await act(() => force.click());
+  await act(() => force.click());
+  assert.equal(stops, 2, 'forcing is exactly one more cancel');
+  const forced = button('Force stopping…');
+  assert.ok(forced, 'it then says the kill is under way');
+  assert.equal(forced.disabled, true, 'and cannot be pressed again');
+});
+
+test('the force offer is not made before its delay', async () => {
+  await fresh();
+  await draw({status: RUNNING, forceAfterMs: 10000});
+  await act(() => button('Stop').click());
+  await wait(50);
+  assert.equal(Boolean(button('Force stop')), false);
+  assert.ok(button('Stopping…'));
+});
+
+test('when the run ends the button goes, and the next run starts again at Stop', async () => {
+  await fresh();
+  let stops = 0;
+  await draw({status: RUNNING, onStop: () => (stops += 1), forceAfterMs: 20});
+  await act(() => button('Stop').click());
+  await wait(60);
+  assert.ok(button('Force stop'), 'the first run reached the force offer');
+  await draw({status: IDLE, onStop: () => (stops += 1), forceAfterMs: 20});
+  assert.equal(document.querySelectorAll('.wb-topbar .button--danger').length, 0, 'nothing running, no button in any phase');
+  await draw({status: RUNNING, onStop: () => (stops += 1), forceAfterMs: 20});
+  const stop = button('Stop');
+  assert.ok(stop, 'a later run starts again at Stop');
+  assert.equal(stop.disabled, false);
+  await wait(60);
+  assert.ok(button('Stop'), 'and a stale timer does not push it on to Force stop');
+  await act(() => button('Stop').click());
+  assert.equal(stops, 2);
+});
+
 test('cards waiting are counted, and the count opens the chat', async () => {
+  await fresh();
   const went = [];
   await draw({waiting: 2, go: (page) => went.push(page)});
   const waiting = button('2 waiting');
   assert.ok(waiting, 'two cards give "2 waiting"');
   assert.equal(waiting.type, 'button');
+  const name = waiting.getAttribute('aria-label');
+  assert.ok(name.startsWith('2 waiting'), 'the name begins with the words on the button');
+  assert.match(name, /answer/);
+  assert.match(name, /Chat/);
   await act(() => waiting.click());
   assert.deepEqual(went, ['chat']);
 
