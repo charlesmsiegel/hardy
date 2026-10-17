@@ -49,6 +49,7 @@ import threading
 import time
 import traceback
 import uuid
+from typing import BinaryIO
 
 HEADER_BYTES = 10
 CELL_FILENAME = "<hardy-cell>"
@@ -159,7 +160,7 @@ def redirect_console_breaks() -> None:
             _CONSOLE_HANDLER = callback
 
 
-def read_exact(stream, count: int) -> bytes | None:
+def read_exact(stream: BinaryIO, count: int) -> bytes | None:
     """Read exactly `count` bytes, or None if the stream ended first.
 
     Reading is done with the stop signal *deferred* rather than raised. There
@@ -1071,6 +1072,11 @@ def _refuse_to_quit(*_args, **_kwargs):
 
 
 def main() -> None:
+    """Serve Hardy's cells until the frame stream ends or stops being frames.
+
+    `sys.argv[1]` is the capture cap in bytes. Exits 0 when the stream ends or
+    desynchronises, and 1 only on a fault in the driver's own plumbing.
+    """
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else 256 * 1024
     namespace: dict = {"__name__": "__hardy_cas__", "__builtins__": __builtins__}
     # `exit` is site.Quitter, which closes stdin before raising SystemExit. No
