@@ -349,7 +349,7 @@ class MacroState:
         if self.phase is not _Phase.IDLE:
             # A definition inside a body. The outer body already suppresses
             # everything this would, and tracking it would need a stack to no
-            # end -- `_macro_bodies` skips over the whole outer span for the
+            # end -- `macro_bodies` skips over the whole outer span for the
             # same reason.
             return
         self.phase = _Phase.NAME
@@ -424,7 +424,7 @@ class MacroState:
         # `{` anywhere as the body opener made `{default}` the body: it
         # closed, the count reached zero, and the real body was live text
         # with a dormant `\begin{verbatim}` in it read as an opener.
-        # `_macro_bodies` walks the brackets for the same reason; this is
+        # `macro_bodies` walks the brackets for the same reason; this is
         # the streaming form of the same rule.
         if character == "[":
             self._open(_Phase.BRACKET)
@@ -771,3 +771,71 @@ def _typeset_pieces(source: str, state: MacroState, reading: Reading) -> Iterato
             if line is None:
                 break
             closing = None
+
+
+def macro_bodies(text: str) -> list[tuple[int, int]]:
+    r"""The span of every macro-definition body in `text`, as `(start, end)`
+    over its braces -- `\newcommand`, `\renewcommand`, `\providecommand`,
+    `\def`, and both bodies of `\newenvironment`/`\renewenvironment`.
+
+    One walk, two questions. What is inside a macro body is not executed until
+    the macro is expanded, and nothing here expands macros -- so the body is
+    dropped for the reachability walk, and it is stopped from opening a
+    verbatim region for the bibliography scan. Those want different treatment
+    of the same span, which is why this returns the spans rather than the
+    edited text.
+
+    The name argument (`{\foo}`, or a bare `\foo` for `\def`) and any
+    `[n]`/`[default]` brackets are not part of the body; only the balanced
+    `{...}` that follows is.
+    """
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while (keyword := MACRO_DEFINITION.search(text, index)) is not None:
+        # `\newenvironment{name}{begin}{end}` has TWO bodies, and the second
+        # is as unexecuted as the first: an `\input` written into either runs
+        # when the environment is used, not when it is defined. Recognising
+        # only `\newcommand` and friends left both of them looking live, which
+        # is the dangerous direction -- a fragment nothing reaches judged part
+        # of the document is compiled by running the unchanged root, which
+        # never reads it.
+        bodies, end = _bodies(text, _body_start(text, keyword.end()), 2 if keyword.group("env") else 1)
+        spans.extend(bodies)
+        index = max(end, keyword.end())
+    return spans
+
+
+def _skip_spaces(text: str, index: int) -> int:
+    while index < len(text) and text[index].isspace():
+        index += 1
+    return index
+
+
+def _body_start(text: str, index: int) -> int:
+    r"""Past the name and the `[...]` arguments of the definition whose keyword
+    ends at `index`: where its first body's brace is, or the end of `text`."""
+    index = _skip_spaces(text, index)
+    if index < len(text) and text[index] == "{":
+        index = skip_balanced(text, index, "{", "}")
+    elif index < len(text) and text[index] == "\\":
+        index = skip_command(text, index)
+    index = _skip_spaces(text, index)
+    while index < len(text) and text[index] == "[":
+        index = _skip_spaces(text, skip_balanced(text, index, "[", "]"))
+    # `\def`'s parameter text (`#1#2`, delimiters) is neither a name nor a
+    # bracket, so it is skipped over rather than parsed.
+    brace = text.find("{", index)
+    return len(text) if brace < 0 else brace
+
+
+def _bodies(text: str, index: int, count: int) -> tuple[list[tuple[int, int]], int]:
+    """Up to `count` balanced brace groups from `index`, and where the last ends."""
+    found: list[tuple[int, int]] = []
+    for _ in range(count):
+        index = _skip_spaces(text, index)
+        if index >= len(text) or text[index] != "{":
+            break
+        end = skip_balanced(text, index, "{", "}")
+        found.append((index, end))
+        index = end
+    return found, index
