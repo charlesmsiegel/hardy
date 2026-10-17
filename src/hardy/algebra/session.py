@@ -8,6 +8,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,12 +18,14 @@ from hardy.algebra.backends import CasBackend
 from hardy.algebra.contracts import (
     _ASKED,
     _INSISTED,
-    DESYNCHRONISED,
     INTERRUPTED,
+    SOURCE_LIMIT_BYTES,
     TIMED_OUT,
+    Author,
     CasError,
     CellOutcome,
     CellRecord,
+    ReadFailure,
     RebuildReport,
     ReplayCheck,
     _why_unverified,
@@ -33,6 +36,159 @@ from hardy.foundation.files import LayoutError, WriteGuard
 from hardy.foundation.locking import FileLock, LockTimeout
 from hardy.foundation.process import INTERRUPT_GRACE_SECONDS
 from hardy.workflows.contracts import RunLimits
+
+
+def _as_stopped(outcome: CellOutcome, *, signalled: bool, killed: bool) -> CellOutcome:
+    """A kernel's reply, corrected by what Hardy knows about stopping it.
+
+    `signalled` is whether Hardy signalled this cell, and `killed` whether it
+    killed the kernel while the cell was out. The stream alone can say neither.
+    """
+    if signalled:
+        outcome = outcome.model_copy(update={"signalled": True})
+    if killed:
+        # A reply read, from a kernel Hardy then killed: the driver answered
+        # -- most often the cell unrun, on the frame's stop -- before the kill
+        # landed. What it said still stands as the cell's result, but the
+        # kernel that said it is gone, and so is its namespace. Left `live`,
+        # the session would send the next cell to a dead process and record
+        # the toolchain as having fallen over.
+        outcome = outcome.model_copy(update={"kernel_lost": True})
+    if not signalled and outcome.status == "interrupted":
+        # The driver says it caught a `KeyboardInterrupt` and Hardy never sent
+        # one, so the cell raised it itself -- `raise KeyboardInterrupt` in the
+        # source, or a library that uses it to unwind. That is an ordinary
+        # failure of the cell, and recording it as a cancellation would put a
+        # user action nobody took into the durable log. The parent is the only
+        # side that can tell these apart: the driver has no idea where the
+        # signal came from.
+        return outcome.model_copy(update={"status": "error"})
+    if signalled and outcome.status != "ok":
+        # The kernel answered after being asked to stop, so it is alive and
+        # its namespace is intact -- but what it answered with is the cell
+        # failing, not the cell's result. A sentinel backend has no status of
+        # its own (`classify` is Hardy's own inference from an error banner),
+        # and the driver's own word for this is already "interrupted"; either
+        # way the honest name for a cell the user stopped is that it was
+        # stopped. A cell that came back "ok" finished before the signal
+        # reached it and keeps its result.
+        return outcome.model_copy(update={"status": "interrupted"})
+    return outcome
+
+
+def _check_source(source: str) -> None:
+    if not source.strip():
+        raise CasError("an empty cell has nothing to execute")
+    if len(source.encode("utf-8")) > SOURCE_LIMIT_BYTES:
+        raise CasError("cell source exceeds the 64 KiB limit")
+
+
+def _rebuild_note(report: RebuildReport, *, died: bool) -> str:
+    """What the first cell after a rebuild says about it, or "" if nothing ran."""
+    notes = []
+    if report.replayed and died:
+        notes.append(f"[kernel restarted; replayed {report.replayed} cell(s)]")
+    elif report.replayed:
+        notes.append(
+            f"[saved session reopened; replayed {report.replayed} cell(s) "
+            "to rebuild its state]"
+        )
+    if report.unverified:
+        # Named individually only when some cells *were* checked. On a backend
+        # that records no digest at all, every cell is on the list and
+        # printing all of them buries the point.
+        which = (
+            "no cell's"
+            if len(report.unverified) == report.replayed
+            else f"cell(s) {list(report.unverified)}'"
+        )
+        # And which of the reasons, because they point a reader at different
+        # things. Saying "there is no state digest" of a cell whose state
+        # *was* compared, and whose unread output tail is the actual gap,
+        # sends them to look in the wrong place.
+        notes.append(
+            f"[{which} replay could be fully compared against the "
+            f"record: {_why_unverified(report)} The state is reconstructed, not "
+            "verified: rerun anything you mean to build on.]"
+        )
+    return " ".join(notes)
+
+
+@dataclass(frozen=True)
+class _Judgement:
+    """Whether a finished cell joins the accepted state, and the notes saying why not."""
+
+    accepted: bool
+    notes: tuple[str, ...]
+
+
+_PERTURBED_NOTE = (
+    "[this cell was interrupted but reported success anyway, so it "
+    "ran under a signal it may have caught. It is recorded, and its "
+    "output is what it produced, but it was not accepted into the "
+    "state replay and export rebuild from: without the interrupt it "
+    "may not take the same path. Rerun it if you mean to build on it.]"
+)
+_CLIPPED_NOTE = (
+    "[output exceeded cas_output_bytes, so this cell was classified "
+    "from a prefix and an error banner could be in the discarded "
+    "tail. It ran, and its output is recorded, but it was not "
+    "accepted into the state replay and export rebuild from. It did "
+    "change the live namespace, and that change is now outside the "
+    "accepted set: any later cell that depends on it will diverge on "
+    "export and after a kernel restart. Rerun it printing less, or "
+    "raise cas_output_bytes and rerun it, before building on it.]"
+)
+# A second press does not wait to see whether the kernel answers -- and it may
+# have: unrun, or even `ok` if the press raced a cell that had just finished.
+# Saying it "did not answer" would contradict the record it sits in.
+_KILLED_NOTE = (
+    "[a second press stopped the kernel, so every value in the "
+    "session is gone, whatever this cell answered; the next cell "
+    "rebuilds from the accepted ones.]"
+)
+_UNANSWERED_NOTE = (
+    "[the kernel did not answer the interrupt, so it was stopped. "
+    "Every value in the session is gone; the next cell rebuilds "
+    "from the accepted ones.]"
+)
+
+
+def _judge(outcome: CellOutcome, backend: CasBackend, *, killed: bool) -> _Judgement:
+    """Decide whether a finished cell may be built on. `killed` is whether
+    Hardy killed the kernel while it was out."""
+    status = outcome.status
+    # A sentinel backend has no status of its own: Hardy decides whether the
+    # cell failed by looking for an error banner in what it printed. When the
+    # capture hit `cas_output_bytes` that decision was made from a prefix, and
+    # Singular's `? ` banner or Macaulay2's `stdio:...: error:` can be sitting
+    # in the tail that was thrown away. Hardy knows the capture was cut, so it
+    # must not then assert success: the cell is recorded and reported in
+    # full, and kept out of the accepted set that recovery replays and export
+    # publishes, where a wrong "ok" would be repeated as fact forever after.
+    #
+    # The driver protocol is untouched. There the child reports its own
+    # status and clips afterwards, so truncation cannot hide a failure -- what
+    # it can still hide is a differing tail, which is export's problem and is
+    # answered there with an `unverified` verdict.
+    unverifiable = outcome.capture_truncated and status == "ok" and not backend.reports_status
+    # A cell Hardy signalled that answered `ok` anyway. It really did finish,
+    # so it keeps that status -- but it finished under a signal, and a cell
+    # (or a library beneath it) that catches one can return normally from a
+    # path it would not otherwise have taken. A replay without the signal
+    # would then not reproduce it, which is the one thing an accepted cell has
+    # to be able to do.
+    perturbed = outcome.signalled and status == "ok"
+    notes = []
+    if perturbed:
+        notes.append(_PERTURBED_NOTE)
+    if unverifiable:
+        notes.append(_CLIPPED_NOTE)
+    if outcome.kernel_lost:
+        notes.append(_KILLED_NOTE if killed else _UNANSWERED_NOTE)
+    return _Judgement(
+        accepted=status == "ok" and not unverifiable and not perturbed, notes=tuple(notes)
+    )
 
 
 class CasSession:
@@ -509,12 +665,44 @@ class CasSession:
         limit = self.limits.cas_cell_seconds if seconds is None else seconds
         kernel = self._kernel
         assert kernel is not None
-
-        def incomplete(**fields: Any) -> CellOutcome:
-            return self.backend.partial(kernel, CellOutcome(**fields))
-
         nonce = f"{time.monotonic_ns():x}"
         self.backend.arm(kernel, nonce)
+        frame, sent = self._deliver(kernel, source, nonce)
+        try:
+            if not sent:
+                return self._undelivered(kernel)
+            deadline = time.monotonic() + limit
+            # The frame, not the source: an echoing interpreter echoes the
+            # sentinel statements bracketing the cell as readily as the cell
+            # itself, and a multi-line cell's second line onward comes back
+            # under a continuation indent rather than a prompt of its own.
+            fed = frame.decode("utf-8", errors="replace")
+            reply = kernel.read_reply(
+                self.backend.extractor(kernel, nonce, fed), deadline, self._interrupted
+            )
+        finally:
+            # Both under the lock `interrupt` takes, so a press either lands
+            # before this (and is recorded against the cell) or finds nothing
+            # in flight and is not. Read here rather than at the bottom of the
+            # method: between the reply arriving and this line, a press is
+            # still aimed at a cell nobody could yet know was over, and it is
+            # resolved conservatively -- the cell is recorded and reported, and
+            # simply not accepted, which costs a rerun rather than correctness.
+            with self._signal_lock:
+                signalled = self._interrupted.is_set()
+                killed = self._killed
+                self._in_flight.clear()
+        if not isinstance(reply, tuple):
+            return self._unanswered(kernel, reply, limit)
+        outcome, consumed = reply
+        self.backend.release(kernel, consumed)
+        return _as_stopped(outcome, signalled=signalled, killed=killed)
+
+    def _deliver(self, kernel: Kernel, source: str, nonce: str) -> tuple[bytes, bool]:
+        """Write the cell's frame, and spend any stop asked for before it went out.
+
+        Returns the frame and whether the kernel took all of it.
+        """
         # The frame is built inside the lock, below, because the bit it carries
         # is the stop level: read outside, a press landing between the read and
         # the lock would be recorded while the frame already said no stop was
@@ -563,119 +751,68 @@ class CasSession:
                     kernel.kill(immediate=True)
                 elif not (stopping and self.backend.frame_carries_stop):
                     kernel.interrupt()
-        try:
-            if not sent:
-                if self._interrupted.is_set():
-                    # The write failed because the second press killed the
-                    # kernel out from under it -- which is what ends a write to
-                    # a kernel that has stopped reading. Hardy stopped this, so
-                    # the record says so; `kernel_died` would blame the
-                    # toolchain for what Esc did.
-                    return incomplete(
-                        status="interrupted",
-                        stderr=(
-                            "the frame was not completely delivered; "
-                            "it was stopped and its state is gone"
-                        ),
-                        kernel_lost=True,
-                        signalled=True,
-                    )
-                return incomplete(status="kernel_died", stderr=kernel.stderr_text())
-            deadline = time.monotonic() + limit
-            # The frame, not the source: an echoing interpreter echoes the
-            # sentinel statements bracketing the cell as readily as the cell
-            # itself, and a multi-line cell's second line onward comes back
-            # under a continuation indent rather than a prompt of its own.
-            fed = frame.decode("utf-8", errors="replace")
-            reply = kernel.read_reply(
-                self.backend.extractor(kernel, nonce, fed), deadline, self._interrupted
-            )
-        finally:
-            # Both under the lock `interrupt` takes, so a press either lands
-            # before this (and is recorded against the cell) or finds nothing
-            # in flight and is not. Read here rather than at the bottom of the
-            # method: between the reply arriving and this line, a press is
-            # still aimed at a cell nobody could yet know was over, and it is
-            # resolved conservatively -- the cell is recorded and reported, and
-            # simply not accepted, which costs a rerun rather than correctness.
-            with self._signal_lock:
-                signalled = self._interrupted.is_set()
-                killed = self._killed
-                self._in_flight.clear()
-        if reply is INTERRUPTED:
+        return frame, sent
+
+    def _undelivered(self, kernel: Kernel) -> CellOutcome:
+        """The outcome of a frame the kernel did not take all of."""
+        if self._interrupted.is_set():
+            # The write failed because the second press killed the kernel out
+            # from under it -- which is what ends a write to a kernel that has
+            # stopped reading. Hardy stopped this, so the record says so;
+            # `kernel_died` would blame the toolchain for what Esc did.
+            return self.backend.partial(kernel, CellOutcome(
+                status="interrupted",
+                stderr="the frame was not completely delivered; it was stopped and its state is gone",
+                kernel_lost=True,
+                signalled=True,
+            ))
+        return self.backend.partial(
+            kernel, CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
+        )
+
+    def _unanswered(self, kernel: Kernel, failure: ReadFailure | None, limit: float) -> CellOutcome:
+        """The outcome of a cell whose reply never arrived, by why it did not."""
+        if failure is INTERRUPTED:
             # Asked to stop and did not answer within the grace. Whatever it is
             # doing, it is not talking, and a kernel that cannot be spoken to
             # cannot be replayed from or built on -- so it goes, exactly as a
             # timed-out one does. This is the case the interrupt exists to
             # avoid, not the one it produces when it works.
-            return incomplete(
+            return self.backend.partial(kernel, CellOutcome(
                 status="interrupted",
                 stderr=(
                     "the cell was interrupted and the kernel did not answer within "
                     f"{INTERRUPT_GRACE_SECONDS:g}s, so it was stopped and its state is gone"
                 ),
                 kernel_lost=True,
-            )
-        if reply is TIMED_OUT:
-            return incomplete(
+            ))
+        if failure is TIMED_OUT:
+            return self.backend.partial(kernel, CellOutcome(
                 status="timeout",
                 stderr=(
                     f"the session budget ended this cell after {limit:g}s"
                     if limit < self.limits.cas_cell_seconds
                     else f"cell exceeded its {limit:g}s limit"
                 ),
-            )
-        if reply is None or reply is DESYNCHRONISED:
-            # A stream that desynchronised cannot be trusted to be answering
-            # the cell we sent, so it is a death rather than a bad answer.
-            if self._interrupted.is_set():
-                # Died *because* it was signalled. Not every interpreter turns
-                # an interrupt into a traceback it can report -- one still
-                # starting up has no handler installed yet, and a REPL may
-                # simply exit -- and a kernel Hardy stopped must not be
-                # recorded as one that fell over on its own. The state is gone
-                # either way; what changes is which cause the record names.
-                return incomplete(
-                    status="interrupted",
-                    stderr=(
-                        "the cell was interrupted and the kernel did not survive it, "
-                        "so its state is gone"
-                    ),
-                    kernel_lost=True,
-                )
-            return incomplete(status="kernel_died", stderr=kernel.stderr_text())
-        outcome, consumed = reply
-        self.backend.release(kernel, consumed)
-        if signalled:
-            outcome = outcome.model_copy(update={"signalled": True})
-        if killed:
-            # A reply read, from a kernel Hardy then killed: the driver
-            # answered -- most often the cell unrun, on the frame's stop --
-            # before the kill landed. What it said still stands as the cell's
-            # result, but the kernel that said it is gone, and so is its
-            # namespace. Left `live`, the session would send the next cell to
-            # a dead process and record the toolchain as having fallen over.
-            outcome = outcome.model_copy(update={"kernel_lost": True})
-        if not signalled and outcome.status == "interrupted":
-            # The driver says it caught a `KeyboardInterrupt` and Hardy never
-            # sent one, so the cell raised it itself -- `raise
-            # KeyboardInterrupt` in the source, or a library that uses it to
-            # unwind. That is an ordinary failure of the cell, and recording it
-            # as a cancellation would put a user action nobody took into the
-            # durable log. The parent is the only side that can tell these
-            # apart: the driver has no idea where the signal came from.
-            outcome = outcome.model_copy(update={"status": "error"})
-        elif signalled and outcome.status != "ok":
-            # The kernel answered after being asked to stop, so it is alive and
-            # its namespace is intact -- but what it answered with is the cell
-            # failing, not the cell's result. A sentinel backend has no status
-            # of its own (`classify` is Hardy's own inference from an error
-            # banner), and the driver's own word for this is already
-            # "interrupted"; either way the honest name for a cell the user
-            # stopped is that it was stopped. A cell that came back "ok"
-            # finished before the signal reached it and keeps its result.
-            outcome = outcome.model_copy(update={"status": "interrupted"})
-        return outcome
+            ))
+        # The stream ended, or desynchronised. One that desynchronised cannot
+        # be trusted to be answering the cell we sent, so it is a death rather
+        # than a bad answer.
+        if self._interrupted.is_set():
+            # Died *because* it was signalled. Not every interpreter turns an
+            # interrupt into a traceback it can report -- one still starting
+            # up has no handler installed yet, and a REPL may simply exit --
+            # and a kernel Hardy stopped must not be recorded as one that fell
+            # over on its own. The state is gone either way; what changes is
+            # which cause the record names.
+            return self.backend.partial(kernel, CellOutcome(
+                status="interrupted",
+                stderr="the cell was interrupted and the kernel did not survive it, so its state is gone",
+                kernel_lost=True,
+            ))
+        return self.backend.partial(
+            kernel, CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
+        )
 
     def interrupt(self) -> bool:
         """Stop the cell in flight without stopping the kernel.
@@ -851,57 +988,17 @@ class CasSession:
         ):
             raise CasError("CAS session budget exhausted")
 
-    def execute(self, source: str, *, author: str = "model", path: str = "") -> CellRecord:
+    def execute(self, source: str, *, author: Author = "model", path: str = "") -> CellRecord:
+        """Run one cell, rebuilding the kernel first if there is none, and record it.
+
+        Every cell is recorded, whatever became of it. Only an `ok` Hardy can
+        stand behind is accepted into the state recovery and export rebuild
+        from; the record's `restart_note` says why when one is not.
+        """
         with self._lock:
             self._guard()
-            if not source.strip():
-                raise CasError("an empty cell has nothing to execute")
-            if len(source.encode("utf-8")) > 64 * 1024:
-                raise CasError("cell source exceeds the 64 KiB limit")
-
-            notes = ""
-            # `_kernel is None` covers a session that has never run a cell in
-            # this process as well as one whose kernel died -- including the
-            # kernel discovery threw away. A merely probed kernel used to leave
-            # this false, so a reopened workspace listed its accepted cells and
-            # then answered the next one from an empty namespace.
-            if self._kernel is None or self.state == "dead":
-                # A death and an ordinary reopen both rebuild, and they are not
-                # the same news. Reading "kernel restarted" on the first cell of
-                # a session nobody had run yet turns opening a saved workspace
-                # into an incident report.
-                died = self.state == "dead"
-                report = self._restore()
-                if report.replayed and died:
-                    notes = f"[kernel restarted; replayed {report.replayed} cell(s)]"
-                elif report.replayed:
-                    notes = (
-                        f"[saved session reopened; replayed {report.replayed} cell(s) "
-                        "to rebuild its state]"
-                    )
-                if report.unverified:
-                    # Named individually only when some cells *were* checked.
-                    # On a backend that records no digest at all, every cell is
-                    # on the list and printing all of them buries the point.
-                    which = (
-                        "no cell's"
-                        if len(report.unverified) == report.replayed
-                        else f"cell(s) {list(report.unverified)}'"
-                    )
-                    # And which of the two reasons, because they point a reader
-                    # at different things. Saying "there is no state digest" of
-                    # a cell whose state *was* compared, and whose unread
-                    # output tail is the actual gap, sends them to look in the
-                    # wrong place.
-                    because = _why_unverified(report)
-                    notes = (notes + " " if notes else "") + (
-                        f"[{which} replay could be fully compared against the "
-                        f"record: {because} The state is reconstructed, not "
-                        "verified: rerun anything you mean to build on.]"
-                    )
-                # The rebuild is billed, so it can be what exhausts the budget.
-                self._guard()
-
+            _check_source(source)
+            rebuilt = self._rebuild_if_needed()
             started = time.monotonic()
             outcome = self._send(source, self._cell_seconds())
             elapsed = time.monotonic() - started
@@ -911,92 +1008,53 @@ class CasSession:
             # `_send` has cleared `_in_flight`.
             with self._signal_lock:
                 killed = self._killed
-
-            status = outcome.status
-            truncated = outcome.capture_truncated
-            # A sentinel backend has no status of its own: Hardy decides whether
-            # the cell failed by looking for an error banner in what it printed.
-            # When the capture hit `cas_output_bytes` that decision was made
-            # from a prefix, and Singular's `? ` banner or Macaulay2's
-            # `stdio:...: error:` can be sitting in the tail that was thrown
-            # away. Hardy knows the capture was cut, so it must not then assert
-            # success: the cell is recorded and reported in full, and kept out
-            # of the accepted set that recovery replays and export publishes,
-            # where a wrong "ok" would be repeated as fact forever after.
-            #
-            # The driver protocol is untouched. There the child reports its own
-            # status and clips afterwards, so truncation cannot hide a failure
-            # -- what it can still hide is a differing tail, which is export's
-            # problem and is answered there with an `unverified` verdict.
-            unverifiable = (
-                truncated and status == "ok" and not self.backend.reports_status
-            )
-            # A cell Hardy signalled that answered `ok` anyway. It really did
-            # finish, so it keeps that status -- but it finished under a signal,
-            # and a cell (or a library beneath it) that catches one can return
-            # normally from a path it would not otherwise have taken. A replay
-            # without the signal would then not reproduce it, which is the one
-            # thing an accepted cell has to be able to do.
-            perturbed = outcome.signalled and status == "ok"
-            if perturbed:
-                notes = (notes + " " if notes else "") + (
-                    "[this cell was interrupted but reported success anyway, so it "
-                    "ran under a signal it may have caught. It is recorded, and its "
-                    "output is what it produced, but it was not accepted into the "
-                    "state replay and export rebuild from: without the interrupt it "
-                    "may not take the same path. Rerun it if you mean to build on it.]"
-                )
-            if unverifiable:
-                notes = (notes + " " if notes else "") + (
-                    "[output exceeded cas_output_bytes, so this cell was classified "
-                    "from a prefix and an error banner could be in the discarded "
-                    "tail. It ran, and its output is recorded, but it was not "
-                    "accepted into the state replay and export rebuild from. It did "
-                    "change the live namespace, and that change is now outside the "
-                    "accepted set: any later cell that depends on it will diverge on "
-                    "export and after a kernel restart. Rerun it printing less, or "
-                    "raise cas_output_bytes and rerun it, before building on it.]"
-                )
-            if outcome.kernel_lost and killed:
-                # A second press, which does not wait to see whether the kernel
-                # answers -- and it may have: unrun, or even `ok` if the press
-                # raced a cell that had just finished. Saying it "did not
-                # answer" would contradict the record it sits in.
-                notes = (notes + " " if notes else "") + (
-                    "[a second press stopped the kernel, so every value in the "
-                    "session is gone, whatever this cell answered; the next cell "
-                    "rebuilds from the accepted ones.]"
-                )
-            elif outcome.kernel_lost:
-                notes = (notes + " " if notes else "") + (
-                    "[the kernel did not answer the interrupt, so it was stopped. "
-                    "Every value in the session is gone; the next cell rebuilds "
-                    "from the accepted ones.]"
-                )
-            if status in {"timeout", "kernel_died"} or outcome.kernel_lost:
+            judgement = _judge(outcome, self.backend, killed=killed)
+            kernel_lost = outcome.kernel_lost or outcome.status in {"timeout", "kernel_died"}
+            if kernel_lost:
                 self._drop_kernel()
             record = CellRecord(
                 seq=len(self._records),
                 segment=self.segment,
-                author=author,  # type: ignore[arg-type]
+                author=author,
                 source=source,
                 path=path,
-                status=status,  # type: ignore[arg-type]
-                accepted=status == "ok" and not unverifiable and not perturbed,
-                kernel_lost=outcome.kernel_lost or status in {"timeout", "kernel_died"},
+                status=outcome.status,
+                accepted=judgement.accepted,
+                kernel_lost=kernel_lost,
                 stdout=outcome.stdout,
                 stderr=outcome.stderr,
                 capture_mode=outcome.capture_mode,
                 value_repr=outcome.value_repr,
                 duration_ms=round(elapsed * 1_000),
                 spent_ms=round(self.total_spent_seconds * 1_000),
-                capture_truncated=truncated,
+                capture_truncated=outcome.capture_truncated,
                 backend=self.backend.name,
                 backend_version=self.version or "",
                 state_digest=outcome.state_digest,
-                restart_note=notes,
+                restart_note=" ".join(note for note in (rebuilt, *judgement.notes) if note),
             )
             return self._append(record)
+
+    def _rebuild_if_needed(self) -> str:
+        """Rebuild the kernel from the accepted cells if there is none; say so.
+
+        `_kernel is None` covers a session that has never run a cell in this
+        process as well as one whose kernel died -- including the kernel
+        discovery threw away. A merely probed kernel used to leave this false,
+        so a reopened workspace listed its accepted cells and then answered
+        the next one from an empty namespace.
+        """
+        if self._kernel is not None and self.state != "dead":
+            return ""
+        # A death and an ordinary reopen both rebuild, and they are not the
+        # same news. Reading "kernel restarted" on the first cell of a session
+        # nobody had run yet turns opening a saved workspace into an incident
+        # report.
+        died = self.state == "dead"
+        note = _rebuild_note(self._restore(), died=died)
+        # The rebuild is billed, so it can be what exhausts the budget.
+        self._guard()
+        return note
 
     def _drop_kernel(self) -> None:
         if self._kernel is not None:
@@ -1102,7 +1160,7 @@ class CasSession:
             )
         return check
 
-    def reset(self, *, author: str = "model") -> None:
+    def reset(self, *, author: Author = "model") -> None:
         """Close the current segment. Nothing is deleted.
 
         The boundary is itself a `CellRecord` carrying the new segment, so one
@@ -1126,7 +1184,7 @@ class CasSession:
                 CellRecord(
                     seq=len(self._records),
                     segment=self.segment + 1,
-                    author=author,  # type: ignore[arg-type]
+                    author=author,
                     source="",
                     status="ok",
                     accepted=False,

@@ -21,15 +21,19 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from hardy.algebra.backends import backend_for
-from hardy.algebra.contracts import MERGED_CAPTURE_NOTE, CasError, CellRecord
+from hardy.algebra.contracts import (
+    MERGED_CAPTURE_NOTE,
+    SOURCE_LIMIT_BYTES,
+    Author,
+    CasError,
+    CellRecord,
+)
 from hardy.algebra.session import CasSession
 from hardy.foundation.files import LayoutError, files_under, guard_for, portable_key, read_text
 from hardy.foundation.values import FrozenModel
 from hardy.prompts import cas_spill_note
 from hardy.workflows.contracts import RunLimits
 from hardy.workflows.layout import CAS_SCRATCH
-
-SOURCE_LIMIT_BYTES = 64 * 1024
 
 #: Where a typed `/cas` cell is filed: `typed/0001.py` and so on, under `cas/`.
 TYPED_DIRECTORY = "typed"
@@ -246,7 +250,7 @@ class CasToolRuntime:
         """`path` proven to be a cell's place under `cas/`, or a refusal."""
         return cas_relative(path, self.suffix)
 
-    def run(self, path: str, source: str | None = None, *, author: str = "model") -> CasCellResult:
+    def run(self, path: str, source: str | None = None, *, author: Author = "model") -> CasCellResult:
         """File a cell and run it, or run the file already there.
 
         `source` is normalised to `source.rstrip() + "\\n"` exactly as a Lean
@@ -344,7 +348,7 @@ class CasToolRuntime:
             raise CasError("CAS observation budget is too small to report the session state")
         return result
 
-    def reset(self, *, author: str = "model") -> CasStateResult:
+    def reset(self, *, author: Author = "model") -> CasStateResult:
         """Discard the namespace and open a clean segment.
 
         `author` defaults to the model because `cas_reset` is one of the tools
