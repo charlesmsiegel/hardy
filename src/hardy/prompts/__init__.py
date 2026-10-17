@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from functools import cache
 from importlib import resources
 
@@ -98,6 +99,8 @@ def writeup_prompt(*, verified: bool) -> str:
     prompt says which it will be.
     """
     return render("staged/writeup", verified=verified)
+
+
 STRUCTURE_INSTRUCTION = "\n\n" + render("staged/structure") + "\n"
 CHAT_SYSTEM_PROMPT = render("chat")
 DELEGATION_WORKER_PROMPT = render("delegation_worker")
@@ -105,17 +108,20 @@ DELEGATION_WORKER_PROMPT = render("delegation_worker")
 #: nothing else -- no tools, no session history, no account of how the
 #: translation was arrived at. See `hardy.workflows.interactive.session._review_assumption`.
 ASSUME_REVIEW_PROMPT = render("assume_review")
-# What the search façade tells the model about an empty `inspect_declarations`
-# batch, and about a `search_modules` query that named a concept rather than a
-# module. Model-facing text, so it lives here rather than as a string constant
-# in `search_tools.py` -- the same reason every other prompt in this file does.
 # What a compacted conversation is told the summary above it is. Model-facing
 # text, so it lives here for the same reason `SPELLINGS_HINT` does -- and it
 # earns its keep: without it a model reads a summary as something one of the
 # parties said and carries on from inside it.
 COMPACTION_PREAMBLE = render("compaction_preamble")
+# What the search facade (`formal/search.py`) tells the model about an empty
+# `inspect_declarations` batch, and about a `search_modules` query that named a
+# concept rather than a module. Model-facing text, so it lives here rather than
+# as a string constant there -- the same reason every other prompt in this file
+# does.
 SPELLINGS_HINT = render("spellings_hint") + "\n"
 CONCEPT_HINT = "\n" + render("concept_hint")
+
+
 # Appended only when a CAS backend was actually discovered, so a session with
 # no kernel never describes tools it does not have.
 def chat_cas_prompt(backend: str, suffix: str = ".py") -> str:
@@ -125,7 +131,7 @@ def chat_cas_prompt(backend: str, suffix: str = ".py") -> str:
 def chat_project_context_prompt(*, name: str, text: str, truncated: bool, shown: int, total: int) -> str:
     """The user's own project instructions, framed as input rather than orders.
 
-    Deliberately outside `_prompt_set_payload`, so this text is *not* folded
+    Deliberately outside `STAGED_PROMPT_SET`, so this text is *not* folded
     into `PROMPT_SET_SHA256`. That hash identifies the instructions a staged
     run was given, and staged runs never see this: an unattended graded run
     whose prompt came partly from a project-local file is not comparable to
@@ -141,26 +147,6 @@ def cas_spill_note(*, artifact: str | None, capture_truncated: bool) -> str:
 
 
 BATCH_SYSTEM_PROMPT = render("batch/system")
-
-
-def _batch_prompt_set_payload() -> dict[str, str]:
-    """What a batch record's own prompt-set hash is taken over: exactly the two
-    templates a batch run actually sends, `batch/system` and `batch/task`.
-
-    Its own hash, never folded into `PROMPT_SET_SHA256` above: that hash
-    covers the staged templates only, and widening it to include `batch/*`
-    would churn a staged record's hash for an edit no staged run ever saw
-    (see `_prompt_set_payload`'s docstring).
-    """
-    return {"system": source("batch/system"), "task": source("batch/task")}
-
-
-def _batch_prompt_set_hash() -> str:
-    canonical = json.dumps(_batch_prompt_set_payload(), separators=(",", ":"), sort_keys=True).encode()
-    return hashlib.sha256(canonical).hexdigest()
-
-
-BATCH_PROMPT_SET_SHA256 = _batch_prompt_set_hash()
 
 
 def claim_signature(claim: FrozenClaim) -> str:
@@ -238,54 +224,68 @@ def batch_task_prompt(informal_claim: str, declaration: str, imports: tuple[str,
     return render("batch/task", informal_claim=informal_claim, declaration=declaration, imports=", ".join(imports))
 
 
-def _prompt_set_payload() -> dict[str, str]:
-    """What the recorded hash is taken over: the staged templates as written.
+@dataclass(frozen=True)
+class PromptSet:
+    """The templates one kind of graded run sends, identified by one hash.
 
-    Deliberately the template source rather than any rendered output, so the
-    hash describes the instructions themselves and not one claim's rendering.
-
-    Every template under `staged/` belongs here, `structure` included: it is
-    appended to each staged turn, so an edit to the response contract changed
-    what a run was told while its manifest kept the same hash. A test
-    enumerates the directory rather than trusting this list.
-
-    The other templates stay out, and that is a decision rather than an
-    oversight. `chat` and `chat_cas` serve an interactive session,
-    which is not a comparable experimental unit and writes no manifest.
-    `batch/system` and `batch/task` do govern graded runs, but the one-shot
-    batch workflow (`src/hardy/workflows/batch.py`) records no prompt-set
-    hash at all (it writes `provenance()`, which is model and endpoint), so there is no field
-    for their absence to falsify; folding them in here would instead churn the
-    staged hash for edits no staged run ever saw. The evals set runner does
-    record a hash over what it actually sends in batch mode, but as its own
-    constant, `BATCH_PROMPT_SET_SHA256` below -- never by widening this one.
-
-    One asymmetry this does not close, recorded so it is not mistaken for
-    coverage: the Codex backend hands the response schema to the SDK as
-    `output_schema` in `agents.providers.codex_turn` and never appends
-    `STRUCTURE_INSTRUCTION`, so a `--backend codex` run records a hash over a
-    template it was not sent, and `RunManifest` carries no backend field to
-    tell the two apart. That is the conservative direction of the same error --
-    identical instructions can now hash differently across a `structure` edit,
-    where before different instructions hashed identically -- but it is still
-    wrong, and closing it means a per-backend hash plus a manifest that says
-    which backend ran -- a `schema_version` bump, deliberately not made here.
+    `parts` maps the key each template is recorded under to the template;
+    `fixed` adds values that belong to the identity without being templates.
+    The hash is over the template source as written rather than any rendered
+    output, so it describes the instructions themselves and not one claim's
+    rendering, and a run that records it can be traced to exactly what it was
+    told.
     """
-    return {
-        "base": source("staged/base"),
-        "developer": source("staged/developer"),
-        "faithfulness": source("staged/faithfulness"),
-        "formalization": source("staged/formalization"),
-        "proof": source("staged/proof"),
-        "structure": source("staged/structure"),
-        "version": PROMPT_SET_VERSION,
-        "writeup": source("staged/writeup"),
-    }
+
+    parts: Mapping[str, str]
+    fixed: Mapping[str, str] = field(default_factory=dict)
+
+    def payload(self) -> dict[str, str]:
+        """What the hash is taken over: each part's source, and the fixed values."""
+        return {**{key: source(name) for key, name in self.parts.items()}, **self.fixed}
+
+    def sha256(self) -> str:
+        canonical = json.dumps(self.payload(), separators=(",", ":"), sort_keys=True).encode()
+        return hashlib.sha256(canonical).hexdigest()
 
 
-def _prompt_set_hash() -> str:
-    canonical = json.dumps(_prompt_set_payload(), separators=(",", ":"), sort_keys=True).encode()
-    return hashlib.sha256(canonical).hexdigest()
+# What a staged run's recorded hash is taken over: the staged templates.
+#
+# Every template under `staged/` belongs here, `structure` included: it is
+# appended to each staged turn, so an edit to the response contract changed
+# what a run was told while its manifest kept the same hash. A test
+# enumerates the directory rather than trusting this list.
+#
+# The other templates stay out, and that is a decision rather than an
+# oversight. `chat` and `chat_cas` serve an interactive session, which is not
+# a comparable experimental unit and writes no manifest. `batch/system` and
+# `batch/task` do govern graded runs, but the one-shot batch workflow
+# (`src/hardy/workflows/batch.py`) records no prompt-set hash at all (it
+# writes `provenance()`, which is model and endpoint), so there is no field
+# for their absence to falsify; folding them in here would instead churn the
+# staged hash for edits no staged run ever saw. The evals set runner does
+# record a hash over what it actually sends in batch mode, but as its own set,
+# `BATCH_PROMPT_SET` below -- never by widening this one.
+#
+# One asymmetry this does not close, recorded so it is not mistaken for
+# coverage: the Codex backend hands the response schema to the SDK as
+# `output_schema` in `agents.providers.codex_turn` and never appends
+# `STRUCTURE_INSTRUCTION`, so a `--backend codex` run records a hash over a
+# template it was not sent, and `RunManifest` carries no backend field to tell
+# the two apart. That is the conservative direction of the same error --
+# identical instructions can now hash differently across a `structure` edit,
+# where before different instructions hashed identically -- but it is still
+# wrong, and closing it means a per-backend hash plus a manifest that says
+# which backend ran -- a `schema_version` bump, deliberately not made here.
+STAGED_PROMPT_SET = PromptSet(
+    parts={name: f"staged/{name}" for name in (
+        "base", "developer", "faithfulness", "formalization", "proof", "structure", "writeup",
+    )},
+    fixed={"version": PROMPT_SET_VERSION},
+)
+PROMPT_SET_SHA256 = STAGED_PROMPT_SET.sha256()
 
-
-PROMPT_SET_SHA256 = _prompt_set_hash()
+# Exactly the two templates a batch run sends. Its own set, never folded into
+# `STAGED_PROMPT_SET`: widening that one would churn a staged record's hash for
+# an edit no staged run ever saw.
+BATCH_PROMPT_SET = PromptSet(parts={"system": "batch/system", "task": "batch/task"})
+BATCH_PROMPT_SET_SHA256 = BATCH_PROMPT_SET.sha256()
