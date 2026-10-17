@@ -417,10 +417,6 @@ class _Running:
         # while the terminal had already said the waiting was over.
         self.escalated = threading.Event()
 
-    @property
-    def detached(self) -> bool:
-        return self.thread in _REGISTER.detached
-
     def capturing(self) -> bool:
         """Whether any of the child's output is still arriving."""
         return any(reader.is_alive() for reader in self.output_readers)
@@ -438,6 +434,11 @@ class _Running:
         self.output_readers = readers
         if self.asked.is_set() and self.capturing():
             self.interrupted.set()
+
+    def join_output(self) -> None:
+        """Give each output reader a bounded wait to finish. One that overruns is a daemon, and is left."""
+        for reader in self.output_readers:
+            reader.join(timeout=TEARDOWN_SECONDS)
 
 
 # How hard a stop is in force: `_REGISTER.stop_level`, 0 when none is.
@@ -522,9 +523,9 @@ def tracked(child: subprocess.Popen) -> Iterator[_Running]:
         arriving_into = _REGISTER.stop_level
         all_children = _REGISTER.stop_detached
         shutting_down = _REGISTER.shutting_down
-    if arriving_into and (all_children or not entry.detached):
+    if arriving_into and (all_children or entry.thread not in _REGISTER.detached):
         # A detached job's child arriving into a stop is not what the stop
-        # was pressed for. Outside the lock, `detached` observes set membership
+        # was pressed for. Outside the lock, this observes set membership
         # and may see either side of a concurrent detach.
         # Signalled regardless -- a group can outlive its leader -- but only
         # *recorded* as stopped if it was still running. A child that finished
@@ -560,7 +561,7 @@ def interrupt_children() -> int:
         # `max`, not assignment: a first press arriving after a second one has
         # already escalated must not talk the stop back down.
         _REGISTER.stop_level = max(_REGISTER.stop_level, _ASKED)
-        entries = [entry for entry in _REGISTER.running if not entry.detached]
+        entries = [entry for entry in _REGISTER.running if entry.thread not in _REGISTER.detached]
     return _interrupt(entries)
 
 
@@ -601,7 +602,10 @@ def stop_children() -> int:
     """
     with _REGISTER.lock:
         _REGISTER.stop_level = _INSISTED
-        entries = [entry for entry in _REGISTER.running if _REGISTER.stop_detached or not entry.detached]
+        entries = [
+            entry for entry in _REGISTER.running
+            if _REGISTER.stop_detached or entry.thread not in _REGISTER.detached
+        ]
     return _stop(entries)
 
 
@@ -761,9 +765,10 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
     """
     started = time.monotonic()
     child = _spawn(spec.argv, cwd=spec.cwd, env=_environment_for(spec))
-    capture = _Capture(child, spec.max_output_bytes)
+    capture = _Capture(spec.max_output_bytes)
+    readers = capture.start(child)
     with tracked(child) as entry:
-        entry.watch_output(capture.readers)
+        entry.watch_output(readers)
         try:
             ending = _wait(entry, capture, started + spec.timeout_seconds)
             timed_out = _wind_down(entry, capture, ending)
@@ -771,7 +776,7 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
             _abandon(child)
             raise
         finally:
-            capture.join()
+            entry.join_output()
         interrupted = entry.interrupted.is_set()
     stdout, stderr, output_overflow = capture.result()
     # A child Hardy stopped has no meaningful exit status, so the result says so
@@ -865,26 +870,30 @@ def _spawn(argv: Sequence[str], *, cwd: Path | str | None, env: dict[str, str] |
 
 
 class _Capture:
-    """A child's stdout and stderr, each drained by its own reader, under one byte budget.
+    """A child's stdout and stderr, kept under one byte budget for both.
 
-    The budget covers both pipes together. Output past it is dropped and
-    `overflow` set the moment it arrives, so the waiting loop can stop the
-    child rather than read on to its deadline.
+    Output past the budget is dropped and `overflow` set the moment it
+    arrives, so the waiting loop can stop the child rather than read on to its
+    deadline.
     """
 
-    def __init__(self, child: subprocess.Popen, limit: int) -> None:
+    def __init__(self, limit: int) -> None:
         self._limit = limit
         self._lock = threading.Lock()
         self._kept = 0
         self._stdout = bytearray()
         self._stderr = bytearray()
         self.overflow = threading.Event()
-        self.readers = (
+
+    def start(self, child: subprocess.Popen) -> tuple[threading.Thread, ...]:
+        """Drain both of `child`'s pipes into the budget, one started reader thread each."""
+        readers = (
             threading.Thread(target=self._drain, args=(child.stdout, self._stdout), daemon=True),
             threading.Thread(target=self._drain, args=(child.stderr, self._stderr), daemon=True),
         )
-        for reader in self.readers:
+        for reader in readers:
             reader.start()
+        return readers
 
     def _drain(self, pipe: io.BufferedIOBase, destination: bytearray) -> None:
         try:
@@ -904,11 +913,6 @@ class _Capture:
             self._kept += min(len(chunk), remaining)
             if len(chunk) > remaining:
                 self.overflow.set()
-
-    def join(self) -> None:
-        """Give each reader a bounded wait to finish. One that overruns is a daemon, and is left."""
-        for reader in self.readers:
-            reader.join(timeout=TEARDOWN_SECONDS)
 
     def result(self) -> tuple[str, str, bool]:
         """Decoded stdout and stderr as captured, and whether the budget overflowed."""
