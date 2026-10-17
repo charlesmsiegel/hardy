@@ -72,3 +72,22 @@ test('late creation response stays with its original project', async () => {
   assert.equal(refreshed,0);
   assert.doesNotMatch(document.body.textContent,/Recorded\./);
 });
+test('target forms use the shared field classes and carry no inline style', async () => {
+  const report = {project:'/p/first',target:{id:'T',digest:'a'.repeat(64),statement:'True'},
+    formal:{id:'F',digest:'b'.repeat(64),statement:'lemma saved_fact : True'},scope:{must_prove:[],allowed_background:[],allowed_interfaces:[]},scope_ref:{id:'S',digest:'c'.repeat(64)},
+    context:null,context_hypotheses:[{id:'H',statement:'x : Nat'}],translation:{status:'unresolved',reviews:[{id:'r',verdict:'approved',reviewer:'me',recorded_at:'now',conditions:'c',reason:'r'}]},
+    formal_proof:{status:'unresolved',reason:'No proof',axioms:[]},statement:{status:'unresolved'},
+    original_proof:{status:'unassessed',reason:'No supplied proof'},repaired_proof:{status:'unassessed',reason:'No repair'},
+    assumptions:[],coverage_gaps:[],bindings:[],saved_candidates:[{id:'L',digest:'d'.repeat(64),name:'Saved'}]};
+  for (const element of [React.createElement(NewTarget,{project:'/p/first'}), React.createElement(TargetReview,{project:'/p/first',report})]) {
+    await act(() => root.render(element));
+    const controls = [...document.querySelectorAll('#root input,#root select,#root textarea')];
+    assert.ok(controls.length);
+    for (const control of controls) {
+      assert.ok(control.labels.length, `label for ${control.name}`);
+      assert.ok(control.classList.contains('field__control'), `${control.name} is a field__control`);
+      assert.ok(control.labels[0].classList.contains('field'), `${control.name} is labelled by a .field`);
+    }
+    assert.deepEqual([...document.querySelectorAll('#root [style]')].map((node) => node.tagName), []);
+  }
+});

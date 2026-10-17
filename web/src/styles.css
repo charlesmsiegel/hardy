@@ -276,7 +276,7 @@ textarea:focus {
 
 .button--quiet:hover:enabled,
 .button--quiet:active:enabled {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-color: transparent;
 }
 
@@ -319,6 +319,102 @@ textarea:focus {
 .field__hint {
   color: var(--muted);
   font: 12px/1.4 var(--ui);
+}
+
+/* The required mark is drawn, not typed: the label a screen reader reads is
+   the label alone (the control's own `required` carries the rest), and the
+   empty alternative keeps the star out of the speech. */
+.field--required .field__label::after {
+  color: var(--muted);
+  content: " *";
+  content: " *" / "";
+}
+
+/* A checkbox: the box then its words, on one line. */
+.field--check {
+  align-items: center;
+  flex-direction: row;
+  font: 13px/1.4 var(--ui);
+  gap: var(--space-2);
+  min-height: var(--control-h-sm);
+}
+
+.field--check > input {
+  flex: none;
+  margin: 0;
+}
+
+/* A form's controls, stacked. `.wb-fieldset` is the `<fieldset>` that
+   disables a whole form while it runs; `.wb-stack` gives the same rhythm to
+   a nested disclosure or group. A button in either keeps its own width. */
+.wb-fieldset,
+.wb-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.wb-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.wb-fieldset--apart {
+  margin-top: var(--space-4);
+}
+
+.wb-fieldset > .button,
+.wb-stack > .button {
+  align-self: flex-start;
+}
+
+/* What a form says back: the outcome of the last request, in the chrome face
+   (its error is `.panel__error`). */
+.wb-feedback {
+  font: 13px/1.4 var(--ui);
+  overflow-wrap: anywhere;
+}
+
+/* Text the page quotes exactly -- TeX, Lean, a digest, a JSON record. */
+.wb-pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 13px/1.5 var(--mono);
+  margin: var(--space-2) 0;
+  overflow-wrap: anywhere;
+  padding: var(--space-2);
+  white-space: pre-wrap;
+}
+
+/* Directly in a card, the card's own gap spaces it; a lone field there (a
+   selector above a form, not a field inside one) takes a little more. */
+.wb-card > .wb-pre {
+  margin: 0;
+}
+
+.wb-card > .field {
+  margin-block: var(--space-1);
+}
+
+/* One entry in a history, set off from the one above. */
+.wb-record {
+  margin-top: var(--space-3);
+}
+
+.wb-subhead {
+  font: 600 14px/1.3 var(--ui);
+  margin: var(--space-2) 0 0;
+}
+
+.wb-wrap {
+  overflow-wrap: anywhere;
+}
+
+.wb-facts {
+  margin: 0;
 }
 
 /* A `<details>` drawn as a card whose summary is the whole clickable header
@@ -398,7 +494,7 @@ textarea:focus {
 
 .picker {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   color: var(--muted);
   font-family: var(--mono);
@@ -656,7 +752,7 @@ select.picker {
 
 .composer__box {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   color: var(--fg);
   font-family: var(--mono);
@@ -1035,7 +1131,7 @@ select.picker {
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;
-  font: 13px var(--ui);
+  font: 13px/1.5 var(--ui);
   gap: 2px;
   padding: 4px 10px 0;
 }
@@ -2152,7 +2248,7 @@ select.picker {
   align-items: center;
   display: flex;
   gap: 2px;
-  font: 12px var(--ui);
+  font: 12px/1.5 var(--ui);
 }
 
 .wb-ledger__toggle-btn {
@@ -2983,7 +3079,7 @@ select.picker {
   border-radius: var(--r);
   color: var(--fg);
   cursor: pointer;
-  font: 12px var(--ui);
+  font: 12px/1.5 var(--ui);
   min-height: var(--control-h-sm);
   padding: 2px 10px;
 }
