@@ -106,17 +106,17 @@ def test_a_locked_writeup_pdf_is_not_fatal(tmp_path: Path, monkeypatch):
     PDF is the one thing left stale, reported in words rather than as a
     traceback past a commit that already succeeded.
     """
-    from hardy.foundation import files as foundation_files
+    from hardy.foundation import locking
     from hardy.foundation.locking import FileInUse
 
-    real_replace = foundation_files.replace_with_retry
+    real_replace = locking.replace_with_retry
 
     def locked_pdf(source, target):
         if Path(target).name == "writeup.pdf":
             raise FileInUse(f"{target} is open in another program")
         real_replace(source, target)
 
-    monkeypatch.setattr(foundation_files, "replace_with_retry", locked_pdf)
+    monkeypatch.setattr(locking, "replace_with_retry", locked_pdf)
 
     output = tmp_path / "workspace"
     aux = tmp_path / "build"
@@ -161,17 +161,17 @@ def test_a_locked_aux_file_refuses_before_commit_and_stamps_nothing(tmp_path: Pa
     window used to raise `FileInUse` out of `check`, after the source had
     already been committed. Refuse before the source changes and name the
     file that must be released."""
-    from hardy.foundation import files as foundation_files
+    from hardy.foundation import locking
     from hardy.foundation.locking import FileInUse
 
-    real_replace = foundation_files.replace_with_retry
+    real_replace = locking.replace_with_retry
 
     def locked_aux(source, target):
         if Path(target).name == "writeup.aux":
             raise FileInUse(f"{target} is open in another program")
         real_replace(source, target)
 
-    monkeypatch.setattr(foundation_files, "replace_with_retry", locked_aux)
+    monkeypatch.setattr(locking, "replace_with_retry", locked_aux)
 
     output = tmp_path / "workspace"
     aux = tmp_path / "build"

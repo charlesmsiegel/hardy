@@ -10,11 +10,10 @@ import json
 import os
 import re
 import shutil
-import tempfile
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
-from hardy.foundation.locking import replace_with_retry
+from hardy.foundation.locking import write_atomically
 
 
 class LayoutError(ValueError):
@@ -89,7 +88,7 @@ def _ensure_dir(directory: Path, parent: Path) -> None:
     target is missing), so a post-hoc check alone would either miss the
     escape or surface a confusing `FileExistsError` instead of `LayoutError`.
     `parent` is the directory's own owning directory, not the project root at
-    large -- see `_refuse_unless_direct_child`.
+    large -- see `resolve_named_child`.
     """
     if directory.is_symlink():
         resolve_named_child(directory, parent)
@@ -109,7 +108,11 @@ _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 class WriteGuard:
-    """The one door a file inside a Hardy-owned directory is written through.
+    """The door a file inside a project directory is written through.
+
+    Not the only door Hardy has: `locking.atomic_write_bytes` replaces a file
+    by path with none of the checks below, for the files Hardy keeps outside
+    any project. Everything a cloned repository can ship goes through here.
 
     `Layout.ensure` proves the shape of the tree ONCE, when a project opens.
     That is setup, and it cannot speak for a write that happens ten minutes
@@ -308,20 +311,7 @@ class WriteGuard:
         disagree across a shared repository. `write_text` below is this
         method under a name that takes a `str`, for exactly that reason.
         """
-        target = self.reserve(name)
-        temporary: str | None = None
-        try:
-            with tempfile.NamedTemporaryFile(dir=self.directory, delete=False) as handle:
-                temporary = handle.name
-                handle.write(content)
-                if sync:
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            replace_with_retry(Path(temporary), target)
-            temporary = None
-        finally:
-            if temporary is not None:
-                Path(temporary).unlink(missing_ok=True)
+        write_atomically(self.reserve(name), lambda handle: handle.write(content), sync=sync)
 
     def write_text(self, name: str, text: str, *, sync: bool = True) -> None:
         """Replace `name` with `text`, encoded LF-only, whole or not at all.
@@ -362,25 +352,15 @@ class WriteGuard:
         than read, so a size limit would only refuse a document the compiler
         really made.
 
-        The same temporary-and-rename as `write_bytes`, for the same reasons:
+        The same `write_atomically` as `write_bytes`, for the same reasons:
         `NamedTemporaryFile` cannot be a name a repository shipped, and the
         rename means a reader never sees half a document.
         """
-        target = self.reserve(name)
-        temporary: str | None = None
-        try:
-            with tempfile.NamedTemporaryFile(dir=self.directory, delete=False) as handle:
-                temporary = handle.name
-                with source.open("rb") as reading:
-                    shutil.copyfileobj(reading, handle)
-                if sync:
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            replace_with_retry(Path(temporary), target)
-            temporary = None
-        finally:
-            if temporary is not None:
-                Path(temporary).unlink(missing_ok=True)
+        def copy(handle: IO[bytes]) -> None:
+            with source.open("rb") as reading:
+                shutil.copyfileobj(reading, handle)
+
+        write_atomically(self.reserve(name), copy, sync=sync)
 
     def unlink(self, name: str, *, missing_ok: bool = False) -> None:
         """Remove `name` from this directory, or refuse.
