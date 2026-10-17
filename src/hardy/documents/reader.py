@@ -296,6 +296,13 @@ def assemble(tex: Mapping[str, str]) -> Displayed:
 
     A fragment nothing `\input`s is absent for the reason it always was: it is
     not typeset, and a statement quoted there is in front of nobody.
+
+    This walk and `syntax.reached_fragments` follow the same `\input`s over
+    different text. This one reads what the reader is shown, nesting an
+    ambiguous conditional and recording it in `uncertain`, which refuses the
+    report; that one reads what TeX may run, dropping whatever either reading
+    of an ambiguous conditional skips. Each errs toward the refusal its own
+    question owes.
     """
     seen: set[str] = set()
     # Over every file, in the order the root inputs them: a preamble usually
