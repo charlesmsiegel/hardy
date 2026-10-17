@@ -31,6 +31,7 @@ from typing import Any
 
 from hardy.agents.contracts import TurnEvent, final_text
 from hardy.agents.loop import TurnLimitReached
+from hardy.agents.usage import ExchangeReport, stated_counters, token_count
 from hardy.foundation.values import ToolResult
 
 SERVER = "hardy"
@@ -140,22 +141,7 @@ def _counts(usage: Any) -> dict[str, Any] | None:
     return {str(key): value for key, value in usage.items()}
 
 
-#: The provider's token counters `_note` sums across an exchange's messages.
-_TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
-
-
-def _tokens(usage: Any) -> dict[str, int]:
-    """The integer token counters in one usage report, and nothing else."""
-    if not isinstance(usage, Mapping):
-        return {}
-    return {
-        key: value
-        for key in _TOKEN_KEYS
-        if isinstance(value := usage.get(key), int) and not isinstance(value, bool) and value >= 0
-    }
-
-
-#: `modelUsage`'s camelCase counters, under the names `usage` uses.
+#: `modelUsage`'s camelCase counters, under the `REPORTED_COUNTERS` names.
 _MODEL_KEYS = {
     "inputTokens": "input_tokens",
     "outputTokens": "output_tokens",
@@ -180,8 +166,8 @@ def _model_tokens(model_usage: Any) -> dict[str, int] | None:
         if not isinstance(counters, Mapping):
             continue
         for camel, key in _MODEL_KEYS.items():
-            value = counters.get(camel)
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            value = token_count(counters.get(camel))
+            if value is not None:
                 summed[key] = summed.get(key, 0) + value
     return summed or None
 
@@ -196,7 +182,7 @@ def _cumulative(reported: dict[str, Any] | None, own: dict[str, int]) -> bool | 
     None when there is nothing to compare: no message stated usage, or the
     report stated none.
     """
-    stated = _tokens(reported)
+    stated = stated_counters(reported)
     if not own or not stated:
         return None
     return any(figure > own.get(key, 0) for key, figure in stated.items())
@@ -802,7 +788,7 @@ class ClaudeAgentRuntime:
         if session:
             self.session_id = session
         if type(message).__name__ == "AssistantMessage":
-            counted = _tokens(getattr(message, "usage", None))
+            counted = stated_counters(getattr(message, "usage", None))
             if counted:
                 # An id-less message cannot be matched to its repeats, so it is
                 # kept under its own key: counted once more than it should be
@@ -891,11 +877,10 @@ class ClaudeAgentRuntime:
                 for name, figure in held.items():
                     own[name] = own.get(name, 0) + figure
             self._message_usage = {}
-            self._observe({
-                "type": "result",
-                "session_id": self.session_id,
-                "turns": self.turns,
-                "cost_usd": getattr(message, "total_cost_usd", None),
+            self._observe(ExchangeReport(
+                session_id=self.session_id,
+                turns=self.turns,
+                cost_usd=getattr(message, "total_cost_usd", None),
                 # The provider's own token counts, passed through unchanged and
                 # left absent when it reported none. `{}` would be read
                 # downstream as a measured zero, which is the one thing a spend
@@ -903,17 +888,18 @@ class ClaudeAgentRuntime:
                 # Either the session's running total or this turn's alone,
                 # depending on the CLI (see `Usage.record`): a fresh client per
                 # turn still resumes the same session (`_options`).
-                "usage": reported,
-                "is_error": getattr(message, "is_error", None),
-                **({"api_error_status": message.api_error_status} if getattr(message, "api_error_status", None) is not None else {}),
-                **({"errors": message.errors} if getattr(message, "errors", None) else {}),
+                usage=reported,
+                is_error=getattr(message, "is_error", None),
+                api_error_status=getattr(message, "api_error_status", None),
+                errors=getattr(message, "errors", None),
                 # What this exchange's own messages moved, whether the report
                 # above states more than that, and the `modelUsage` counters
                 # that share the cost's lifecycle. Together they let the ledger
                 # decide, for tokens and for cost separately, whether a report
                 # is a restored running total, without trusting either reading
                 # of the CLI.
-                "exchange_usage": own or None,
-                "cumulative": _cumulative(reported, own),
-                "model_usage": _model_tokens(getattr(message, "model_usage", None)),
-            })
+                guarded=True,
+                exchange_usage=own or None,
+                cumulative=_cumulative(reported, own),
+                model_usage=_model_tokens(getattr(message, "model_usage", None)),
+            ).event())
