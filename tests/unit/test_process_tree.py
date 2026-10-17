@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy.algebra.kernel import _Kernel
+from hardy.algebra.kernel import Kernel
 from hardy.foundation import process
 
 
@@ -103,7 +103,7 @@ def test_kernel_kill_does_not_wait_for_an_escaped_pipe_holder(tmp_path):
         'print("ready", flush=True)\n'
         'sys.stdin.readline()\n'
     )
-    kernel = _Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
+    kernel = Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
     until = time.monotonic() + 5
     while (not ready.exists() or 'ready' not in kernel.stdout_text()) and time.monotonic() < until:
         time.sleep(.01)
@@ -173,7 +173,7 @@ def test_kernel_kill_stops_group_members_even_when_the_leader_obeys(tmp_path):
         'print("helper spawned", helper.pid, flush=True)\n'
         'sys.stdin.readline()\n'
     )
-    kernel = _Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
+    kernel = Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
     contained.write_text('ready')
     until = time.monotonic() + 5
     while not ready.exists() and time.monotonic() < until:
@@ -249,7 +249,7 @@ def test_kernel_kill_does_not_close_stdin_owned_by_a_blocked_writer(tmp_path):
         f'subprocess.Popen([sys.executable,"-c",{helper!r}], stdin=sys.stdin, start_new_session=True)\n'
         'time.sleep(30)\n'
     )
-    kernel = _Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
+    kernel = Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
     until = time.monotonic() + 5
     while not ready.exists() and time.monotonic() < until:
         time.sleep(.01)
@@ -288,7 +288,7 @@ def test_kernel_kill_does_not_close_stdin_owned_by_a_blocked_writer(tmp_path):
 def test_input_delivery_does_not_assume_a_leader_exit_ended_its_descendant(tmp_path):
     helper = 'import sys,time; time.sleep(.3); sys.stdin.buffer.read(1000000)'
     source = f'import subprocess,sys; subprocess.Popen([sys.executable,"-c",{helper!r}], stdin=sys.stdin)'
-    kernel = _Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
+    kernel = Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
     try:
         assert kernel.send(b'x' * 1_000_000)
     finally:
@@ -300,7 +300,7 @@ def test_windows_close_waits_for_job_settlement(tmp_path, monkeypatch):
 
     from hardy.algebra import kernel as kernel_module
 
-    kernel = _Kernel([sys.executable, '-c', 'import sys; sys.stdin.readline()'],
+    kernel = Kernel([sys.executable, '-c', 'import sys; sys.stdin.readline()'],
                      tmp_path, 4096, merge_stderr=True)
     settled = threading.Event()
     queried = threading.Event()

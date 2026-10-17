@@ -329,7 +329,7 @@ def test_a_press_remembered_before_the_cell_is_applied_by_the_frame_alone(
         sent.append(self.process.pid)
         return False
 
-    monkeypatch.setattr(kernel_module._Kernel, "interrupt", never)
+    monkeypatch.setattr(kernel_module.Kernel, "interrupt", never)
     session = cas_session(cas_cell_seconds=3, cas_session_seconds=600)
     try:
         session.execute("a")
@@ -481,7 +481,7 @@ def test_a_kill_that_lands_after_the_unrun_answer_still_loses_the_kernel(
     been recorded as the toolchain falling over. Here the kill is held until
     the answer is in the buffer, so every platform takes that order.
     """
-    real_kill = cas_module._Kernel.kill
+    real_kill = cas_module.Kernel.kill
 
     def late(self, *, immediate: bool = False) -> None:
         end = time.monotonic() + 30
@@ -492,7 +492,7 @@ def test_a_kill_that_lands_after_the_unrun_answer_still_loses_the_kernel(
     session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
     try:
         session.execute("a")
-        monkeypatch.setattr(cas_module._Kernel, "kill", late)
+        monkeypatch.setattr(cas_module.Kernel, "kill", late)
         assert session.interrupt() is False
         assert session.escalate() is False
 
@@ -506,7 +506,7 @@ def test_a_kill_that_lands_after_the_unrun_answer_still_loses_the_kernel(
         assert "a second press stopped the kernel" in record.restart_note
         assert "did not answer" not in record.restart_note
         # The next cell rebuilds rather than being sent to the dead process.
-        monkeypatch.setattr(cas_module._Kernel, "kill", real_kill)
+        monkeypatch.setattr(cas_module.Kernel, "kill", real_kill)
         session.resume()
         assert session.execute("b").status == "ok"
     finally:
@@ -521,7 +521,7 @@ def test_a_second_press_that_races_a_finished_cell_still_loses_the_kernel(
     so the kernel is gone whatever the reply said. Driven on one thread --
     the press is made from inside `read_reply`, just after it found the reply
     -- so the order is fixed rather than hoped for."""
-    real_read = cas_module._Kernel.read_reply
+    real_read = cas_module.Kernel.read_reply
     session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
     pressed: list[bool] = []
 
@@ -532,7 +532,7 @@ def test_a_second_press_that_races_a_finished_cell_still_loses_the_kernel(
 
     try:
         session.execute("a")
-        monkeypatch.setattr(cas_module._Kernel, "read_reply", then_press)
+        monkeypatch.setattr(cas_module.Kernel, "read_reply", then_press)
 
         record = session.execute("b")
 
@@ -547,7 +547,7 @@ def test_a_second_press_that_races_a_finished_cell_still_loses_the_kernel(
         assert "a second press stopped the kernel" in record.restart_note
         assert "did not answer" not in record.restart_note
 
-        monkeypatch.setattr(cas_module._Kernel, "read_reply", real_read)
+        monkeypatch.setattr(cas_module.Kernel, "read_reply", real_read)
         session.resume()
         rebuilt = session.execute("c")
         assert rebuilt.status == "ok"

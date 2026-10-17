@@ -13,14 +13,12 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from hardy.algebra.backends import CasBackend
 from hardy.algebra.contracts import (
     _ASKED,
     _INSISTED,
     DESYNCHRONISED,
-    HEADER_BYTES,
     INTERRUPTED,
-    SENTINEL_BEGIN,
-    SENTINEL_END,
     TIMED_OUT,
     CasError,
     CellOutcome,
@@ -30,7 +28,7 @@ from hardy.algebra.contracts import (
     reproduces,
     unobservable,
 )
-from hardy.algebra.kernel import _Kernel
+from hardy.algebra.kernel import Kernel
 from hardy.foundation.files import LayoutError, WriteGuard
 from hardy.foundation.locking import FileLock, LockTimeout
 from hardy.foundation.process import INTERRUPT_GRACE_SECONDS
@@ -43,7 +41,7 @@ class CasSession:
     def __init__(
         self,
         *,
-        backend: Any,
+        backend: CasBackend,
         command: Path | None,
         log_path: Path,
         limits: RunLimits,
@@ -75,7 +73,7 @@ class CasSession:
         # One stateful process behind one stdin stream, reachable from chat,
         # staged runs, and MCP. The lock belongs to the resource, not a caller.
         self._lock = threading.RLock()
-        self._kernel: _Kernel | None = None
+        self._kernel: Kernel | None = None
         # Both read and written without the lock, on purpose: the thread that
         # holds it is the one inside `execute`, waiting on the kernel, and that
         # is precisely the thread an interrupt has to reach. An `Event` rather
@@ -420,24 +418,10 @@ class CasSession:
         self._require_owner()
         cap = self.limits.cas_output_bytes
         argv = self.backend.argv(self.command, cap)
-        # A length-framed backend clips its own output to `cap`, so the reader
-        # keeps headroom: tripping the retention limit there would mean a frame
-        # that can never be assembled, and is treated as a broken kernel rather
-        # than as a large answer.
-        #
-        # The factor is six, and it is not slack. `cas_driver.run_cell`
-        # budgets stdout, stderr and value_repr *jointly* against `cap`, so a
-        # payload carries at most `cap` bytes of captured text -- but it
-        # carries them JSON-escaped, and a control byte becomes a six-byte
-        # backslash-u escape. A cell printing NUL bytes is legal, so anything
-        # smaller is a cap a legal cell can walk past, and walking past it
-        # means a frame that never assembles, a cell that waits out the whole
-        # timeout, and a kernel dropped with all its state.
-        retain = cap if self.backend.framing == "sentinel" else cap * 6 + 65_536
         try:
-            kernel = _Kernel(
-                argv, self.cwd, retain, getattr(self.backend, "environment", {}),
-                merge_stderr=self.backend.framing == "sentinel",
+            kernel = Kernel(
+                argv, self.cwd, self.backend.retention(cap), self.backend.environment,
+                merge_stderr=self.backend.capture_mode == "merged",
             )
         except (OSError, ValueError) as error:
             self.state = "dead"
@@ -487,127 +471,6 @@ class CasSession:
             self.version = raw.strip().strip("'\"") or "unknown"
             return self.version
 
-    def _extractor(self, nonce: str, fed: str = "") -> Callable[[bytes], Any]:
-        """`fed` is the framed text this cell was sent, for `sanitize` to
-        recognise the interpreter's echo of it. Unused by the length path,
-        whose driver never echoes anything."""
-        if self.backend.framing == "length":
-
-            def extract_length(raw: bytes) -> Any:
-                if len(raw) < HEADER_BYTES:
-                    return None
-                try:
-                    length = int(raw[:HEADER_BYTES].decode("ascii"))
-                except (ValueError, UnicodeDecodeError):
-                    return DESYNCHRONISED
-                body = raw[HEADER_BYTES : HEADER_BYTES + length]
-                if len(body) < length:
-                    return None
-                try:
-                    payload = json.loads(body.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    return DESYNCHRONISED
-                outcome = CellOutcome(
-                    status=payload.get("status", "ok"),
-                    stdout=payload.get("stdout", ""),
-                    stderr=payload.get("stderr", ""),
-                    value_repr=payload.get("value_repr", ""),
-                    capture_truncated=bool(payload.get("capture_truncated")),
-                    state_digest=str(payload.get("state_digest", "")),
-                )
-                return outcome, HEADER_BYTES + length
-
-            return extract_length
-
-        begin = SENTINEL_BEGIN.format(nonce=nonce).encode("utf-8")
-        end = SENTINEL_END.format(nonce=nonce).encode("utf-8")
-        # A backend that echoes stdin (confirmed of Macaulay2: it prints
-        # `iN : ` followed by the exact line it was fed, tty or not) writes
-        # the marker text a *second* time before the real one: once inside
-        # its own echoed source line (`iN : << "«marker»" << endl;`), and
-        # only afterwards as the bare line the `<<` statement actually
-        # prints. A bare `raw.find(marker)` matches the first, embedded
-        # occurrence, and every cell's captured body ends up carrying a
-        # fragment of that echoed statement.
-        #
-        # The two occurrences are told apart by what immediately follows
-        # them, not by what precedes them -- a preceding newline is not a
-        # reliable signal, since an in-flight prompt from the *previous* cell
-        # can legitimately sit directly in front of the real marker too (see
-        # `test_state_is_not_polluted_by_the_previous_cells_prompt`, which
-        # exists precisely to pin that down). The embedded copy is always
-        # immediately followed by the fixed tail of the echo template itself
-        # (`" << endl;` for Macaulay2, `");` for Singular) because that is
-        # what is on the rest of the line we sent; the real, bare-printed
-        # copy never is. Skipping any occurrence with that tail right after
-        # it, and continuing the search past it, finds the real one
-        # regardless of what backend-specific noise precedes either.
-        tail = self.backend.echo.rsplit("{marker}", 1)[1].encode("utf-8")
-
-        def _find_marker(raw: bytes, marker: bytes, after: int) -> int:
-            pos = after
-            while (hit := raw.find(marker, pos)) != -1:
-                echoed_end = hit + len(marker)
-                following = raw[echoed_end : echoed_end + len(tail)]
-                # A read boundary is not a language boundary. Until a byte
-                # distinguishes a bare marker from its echoed source, wait.
-                if tail.startswith(following) and len(following) < len(tail):
-                    return -1
-                if following == tail:
-                    pos = echoed_end
-                    continue
-                return hit
-            return -1
-
-        def extract_sentinel(raw: bytes) -> Any:
-            kernel = self._kernel
-            # A pipe preserves write order, so whatever the previous cell
-            # printed -- including a prompt still arriving when this cell was
-            # armed -- is necessarily before this cell's begin marker in the
-            # stream, however late it happens to show up. Waiting for the
-            # begin marker before looking at anything excludes it without
-            # ever having to guess whether it has fully arrived.
-            begin_at = _find_marker(raw, begin, 0)
-            if begin_at == -1:
-                return None
-            start = begin_at + len(begin)
-            # `marker_seen` is the *scanner's* answer, and the scanner is a
-            # bare `in` test over a rolling tail: it cannot tell a marker the
-            # interpreter printed from a marker the interpreter echoed off its
-            # own stdin. Macaulay2 echoes, and it flushes the echoed end-marker
-            # statement a statement before it runs it -- so trusting
-            # `marker_seen` on its own ends a cell at the echo and drops
-            # whatever the cell was still writing. It exists for exactly one
-            # case, where the real end marker's bytes were dropped at the
-            # retention cap and only the scan could have seen them, so it is
-            # only consulted when retention actually overflowed.
-            truncated_past_the_marker = (
-                kernel is not None and kernel.truncated and kernel.marker_seen
-            )
-            end_at = _find_marker(raw, end, start)
-            if end_at == -1 and not truncated_past_the_marker:
-                return None
-            if end_at != -1:
-                body = raw[start:end_at].decode("utf-8", errors="replace")
-                consumed = end_at + len(end)
-            else:
-                # Retention stopped before the end marker; scanning continued
-                # via `marker_seen`, but the bytes themselves are gone.
-                body = raw[start:].decode("utf-8", errors="replace")
-                consumed = len(raw)
-            body = self.backend.sanitize(body, fed)
-            outcome = CellOutcome(
-                # Both child descriptors share one OS pipe. Errors written
-                # before the marker cannot arrive behind it in another drain.
-                status=self.backend.classify(body),
-                stdout=body,
-                capture_mode="merged",
-                capture_truncated=bool(kernel and kernel.truncated),
-            )
-            return outcome, consumed
-
-        return extract_sentinel
-
     def _send(self, source: str, seconds: float | None = None) -> CellOutcome:
         """One round trip. Assumes the lock and a started kernel.
 
@@ -620,21 +483,10 @@ class CasSession:
         assert kernel is not None
 
         def incomplete(**fields: Any) -> CellOutcome:
-            # Without a closing marker this is a bounded partial transcript,
-            # including framing. Preserve it as diagnostics, never as success.
-            if self.backend.framing == "sentinel":
-                fields.update(
-                    stdout=kernel.stdout_text(), capture_mode="merged",
-                    capture_truncated=kernel.truncated,
-                )
-            return CellOutcome(**fields)
+            return self.backend.partial(kernel, CellOutcome(**fields))
 
         nonce = f"{time.monotonic_ns():x}"
-        if self.backend.framing == "length":
-            kernel.clear()
-        else:
-            end = SENTINEL_END.format(nonce=nonce).encode()
-            kernel.rearm(end)
+        self.backend.arm(kernel, nonce)
         # The frame is built inside the lock, below, because the bit it carries
         # is the stop level: read outside, a press landing between the read and
         # the lock would be recorded while the frame already said no stop was
@@ -647,7 +499,7 @@ class CasSession:
             self._interrupted.clear()
             self._killed = False
             stopping = self._stop_level > 0
-            frame = self.backend.frame(source, nonce, stopping)
+            frame = self.backend.frame(source, nonce, stopping=stopping)
             self._sending.set()
         # Outside the lock. `write` to a full pipe blocks until the kernel
         # reads, and `interrupt` and `escalate` are called from the terminal's
@@ -681,7 +533,7 @@ class CasSession:
                 if self._stop_level >= _INSISTED:
                     self._killed = True
                     kernel.kill(immediate=True)
-                elif not (stopping and self.backend.framing == "length"):
+                elif not (stopping and self.backend.frame_carries_stop):
                     kernel.interrupt()
         try:
             if not sent:
@@ -708,7 +560,7 @@ class CasSession:
             # under a continuation indent rather than a prompt of its own.
             fed = frame.decode("utf-8", errors="replace")
             reply = kernel.read_reply(
-                self._extractor(nonce, fed), deadline, self._interrupted
+                self.backend.extractor(kernel, nonce, fed), deadline, self._interrupted
             )
         finally:
             # Both under the lock `interrupt` takes, so a press either lands
@@ -765,8 +617,7 @@ class CasSession:
                 )
             return incomplete(status="kernel_died", stderr=kernel.stderr_text())
         outcome, consumed = reply
-        if self.backend.framing == "sentinel":
-            kernel.consume(consumed)
+        self.backend.release(kernel, consumed)
         if signalled:
             outcome = outcome.model_copy(update={"signalled": True})
         if killed:
@@ -1050,7 +901,7 @@ class CasSession:
             # -- what it can still hide is a differing tail, which is export's
             # problem and is answered there with an `unverified` verdict.
             unverifiable = (
-                truncated and status == "ok" and self.backend.framing == "sentinel"
+                truncated and status == "ok" and not self.backend.reports_status
             )
             # A cell Hardy signalled that answered `ok` anyway. It really did
             # finish, so it keeps that status -- but it finished under a signal,

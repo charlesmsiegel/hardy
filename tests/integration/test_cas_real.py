@@ -16,7 +16,7 @@ import pytest
 from hardy.algebra.cas import CasSession, backend_for
 from hardy.algebra.contracts import CasError
 from hardy.algebra.export import export_session
-from hardy.algebra.kernel import _Kernel
+from hardy.algebra.kernel import Kernel
 from hardy.workflows.contracts import RunLimits
 
 pytestmark = pytest.mark.real_toolchain
@@ -170,14 +170,14 @@ def test_macaulay2_scripted_ordered_capture_acceptance(tmp_path) -> None:
 def test_macaulay2_error_attribution_with_a_delayed_stderr_reader(tmp_path, monkeypatch):
     """Real interpreter writes; force the parent-reader race deterministically."""
     release = threading.Event()
-    drain = _Kernel._drain
+    drain = Kernel._drain
 
     def delayed_stderr(self, pipe, destination):
         if pipe is self.process.stderr:
             release.wait(3)
         drain(self, pipe, destination)
 
-    monkeypatch.setattr(_Kernel, "_drain", delayed_stderr)
+    monkeypatch.setattr(Kernel, "_drain", delayed_stderr)
     session = session_for("macaulay2", "M2", tmp_path)
     try:
         broken = session.execute("1/0")

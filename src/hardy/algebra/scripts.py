@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from hardy.algebra.backends import CasBackend
 from hardy.algebra.contracts import CasError
 from hardy.algebra.operations import OperationControl
 from hardy.foundation.process import (
@@ -93,7 +94,7 @@ def _feed(process: subprocess.Popen, payload: bytes) -> None:
 
 def run_exported_script(
     *,
-    backend: Any,
+    backend: CasBackend,
     command: Path | None,
     script: Path,
     cwd: Path,
@@ -120,13 +121,13 @@ def run_exported_script(
     # A line-oriented interpreter is fed the file on stdin, as the session
     # feeds it cells. Everything else gets an immediately closed stdin, so a
     # program that reads it sees EOF instead of blocking until the deadline.
-    payload = script.read_bytes() if getattr(backend, "script_stdin", False) else b""
+    payload = script.read_bytes() if backend.script_stdin else b""
     cap = max(1, max_output_bytes)
     out, err = bytearray(), bytearray()
     overflowed = [False]
     left_behind = [False]
     unknown = [True]
-    environment = dict(getattr(backend, "environment", {}))
+    environment = dict(backend.environment)
     # The capture is decoded as UTF-8 below, so a Python child is told to
     # write it. On Windows its stdout would otherwise be encoded with the
     # console codepage, and the markers Hardy prints around the transcript --
@@ -145,11 +146,7 @@ def run_exported_script(
             shell=False,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=(
-                subprocess.STDOUT
-                if getattr(backend, "framing", "length") == "sentinel"
-                else subprocess.PIPE
-            ),
+            stderr=subprocess.STDOUT if backend.capture_mode == "merged" else subprocess.PIPE,
             **child_creation(),
         )
     except (OSError, ValueError) as error:
