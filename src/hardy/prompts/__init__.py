@@ -1,4 +1,11 @@
-"""Every instruction Hardy sends a model, and the loader that renders them.
+"""The instructions Hardy sends a model, and the loader that renders them.
+
+Not yet every one. Six project-workflow system prompts are still written
+inline as `system=` arguments in `workflows/interactive/` (repair assessment,
+manuscript extraction, the two faithfulness readers in `live_capabilities` and
+`live_literature`, citation expansion, the referee), and the test that keeps
+prompt text here looks only for long string constants assigned to a name, so
+it does not see them.
 
 The templates live beside this module as `.md.j2` files so that prompt text is
 edited as prose rather than as Python string literals. They are Jinja2, with

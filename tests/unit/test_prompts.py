@@ -79,7 +79,9 @@ def test_no_prompt_text_is_left_behind_in_the_code():
     """One home for prompts, or there are two and only one gets maintained.
 
     Long string constants are how every prompt here started life, so a new one
-    appearing in a module is the thing to catch.
+    appearing in a module is the thing to catch. Only constants assigned to a
+    name: a prompt passed inline as a keyword argument is not seen, and the
+    module docstring of `hardy.prompts` names the ones that are.
     """
     stragglers = []
     for path in sorted(SOURCE.rglob("*.py")):
@@ -331,6 +333,8 @@ def test_the_workaround_passages_are_marked_in_the_source_and_absent_from_the_pr
     marker = "{# workaround, not principle"
     assert prompts.source("chat").count(marker) == 2
     assert prompts.source("cas_spill").count(marker) == 1
+    assert prompts.source("chat_cas").count(marker) == 1
+    assert "workaround" not in prompts.chat_cas_prompt("sympy").lower()
     assert "workaround" not in prompts.render("chat").lower()
     spill = prompts.render("cas_spill", artifact="spill.txt", capture_truncated=False)
     assert "workaround" not in spill.lower()
