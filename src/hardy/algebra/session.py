@@ -13,8 +13,9 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from hardy.algebra.backends import CasBackend
 from hardy.algebra.contracts import (
@@ -33,6 +34,37 @@ from hardy.algebra.journal import CellJournal
 from hardy.algebra.kernel import Kernel
 from hardy.foundation.files import LayoutError
 from hardy.workflows.contracts import RunLimits
+
+
+class KernelState(StrEnum):
+    """Where the session's kernel stands, as `cas_state` reports it."""
+
+    # No kernel yet, or one closed with nothing lost in it. The next cell
+    # rebuilds from the accepted log without calling that a restart.
+    COLD = "cold"
+    LIVE = "live"
+    # The kernel was lost. The next cell rebuilds and says the kernel restarted.
+    DEAD = "dead"
+    # The log no longer describes a state that can be rebuilt faithfully, or
+    # cannot be written. Nothing runs until a reset.
+    POISONED = "poisoned"
+
+
+def _lost_effects(cells: tuple[CellRecord, ...]) -> list[int]:
+    """The cells whose effects a rebuild from the accepted ones would leave out.
+
+    Unaccepted live cells can mutate the namespace before returning.
+    Replaying only accepted cells cannot recover those effects, even when
+    later accepted cells produce the same output, so they require an explicit
+    reset. A cell whose kernel was lost took its effects with it; a record
+    from before `kernel_lost` existed counts only for a status that proves it.
+    """
+    return [
+        record.seq
+        for record in cells
+        if not record.accepted and record.kernel_lost is not True
+        and record.status not in {"timeout", "kernel_died"}
+    ]
 
 
 def _check_source(source: str) -> None:
@@ -165,11 +197,10 @@ class CasSession:
     ) -> None:
         self.backend = backend
         self.command = command
-        self.log_path = log_path
         self.limits = limits
         self.cwd = cwd or log_path.parent
         self.observe = observe
-        self.state: Literal["cold", "live", "dead", "poisoned"] = "cold"
+        self.state = KernelState.COLD
         self.version: str | None = None
         # This process's spend, and what `cas_session_seconds` bounds: a guard
         # against a runaway computation, not the session's figure. That is
@@ -182,7 +213,6 @@ class CasSession:
         # An unusable absent log remains constructible, but no kernel may run
         # before its directory can be created and its writer lease acquired.
         self._journal = CellJournal(log_path)
-        self._closed = False
         # The session's own figure: every second of CAS wall clock billed to
         # this log, across every process that has opened it. Read back from the
         # last record, which carries the running total as of its append, and
@@ -201,13 +231,18 @@ class CasSession:
                 raise
 
     @property
+    def log_path(self) -> Path:
+        """The cell log this session owns; its siblings sit beside it."""
+        return self._journal.path
+
+    @property
     def _kernel(self) -> Kernel | None:
         return self._exchange.kernel
 
     def _require_owner(self) -> None:
         if self._exchange.shutting_down:
             raise CasError("the CAS session is closing")
-        if self._closed:
+        if self._journal.closed:
             raise CasError("the CAS session is closed; open a new session before running or writing")
         try:
             if not self._journal.owned:
@@ -282,14 +317,14 @@ class CasSession:
                 merge_stderr=self.backend.capture_mode == "merged",
             )
         except (OSError, ValueError) as error:
-            self.state = "dead"
+            self.state = KernelState.DEAD
             raise CasError(
                 f"could not start the {self.backend.name} kernel "
                 f"({' '.join(argv)}): {error}"
             ) from None
         if not self._exchange.adopt(kernel):
             raise CasError("the CAS session is closing")
-        self.state = "live"
+        self.state = KernelState.LIVE
 
     def start_kernel(self) -> None:
         """Bring up a kernel with nothing replayed into it.
@@ -431,22 +466,14 @@ class CasSession:
 
     # ------------------------------------------------------------- execute
 
-    def _foreign_backend(self) -> str | None:
-        """The name on the live segment's records, if it is not this backend's."""
-        segment = self.segment
-        for record in self._journal.records:
-            if record.segment == segment and record.backend and record.backend != self.backend.name:
-                return record.backend
-        return None
-
     def _guard(self) -> None:
         self._require_owner()
-        if self.state == "poisoned":
+        if self.state == KernelState.POISONED:
             raise CasError(
                 "the CAS session is poisoned: its state could not be rebuilt faithfully. "
                 "Reset it to start a clean kernel."
             )
-        foreign = self._foreign_backend()
+        foreign = self._journal.foreign_backend(self.backend.name)
         if foreign is not None:
             # Replaying this segment would feed one backend's language to
             # another, and a cell that happens to parse would be worse than one
@@ -517,13 +544,13 @@ class CasSession:
         so a reopened workspace listed its accepted cells and then answered
         the next one from an empty namespace.
         """
-        if self._kernel is not None and self.state != "dead":
+        if self._kernel is not None and self.state != KernelState.DEAD:
             return ""
         # A death and an ordinary reopen both rebuild, and they are not the
         # same news. Reading "kernel restarted" on the first cell of a session
         # nobody had run yet turns opening a saved workspace into an incident
         # report.
-        died = self.state == "dead"
+        died = self.state == KernelState.DEAD
         note = _rebuild_note(self._restore(), died=died)
         # The rebuild is billed, so it can be what exhausts the budget.
         self._guard()
@@ -531,7 +558,7 @@ class CasSession:
 
     def _drop_kernel(self) -> None:
         self._exchange.drop()
-        self.state = "dead"
+        self.state = KernelState.DEAD
 
     def _poisoned(self, message: str) -> CasError:
         """Drop the kernel and mark the session poisoned; the error says why.
@@ -540,18 +567,24 @@ class CasSession:
         rebuild can trust, so nothing runs again until a reset.
         """
         self._drop_kernel()
-        self.state = "poisoned"
+        self.state = KernelState.POISONED
         return CasError(message)
 
     def _discard_kernel(self) -> None:
         """Close a kernel that nothing died in, leaving the session cold."""
         self._exchange.drop()
-        if self.state != "poisoned":
-            self.state = "cold"
+        if self.state != KernelState.POISONED:
+            self.state = KernelState.COLD
 
     def _restore(self) -> RebuildReport:
         """Rebuild live state after a death, and verify what was rebuilt."""
-        self._refuse_lost_effects()
+        unreplayable = _lost_effects(self.cells())
+        if unreplayable:
+            raise self._poisoned(
+                "CAS state did not reproduce: unaccepted cell(s) "
+                f"{unreplayable} may have changed the live state. "
+                "Reset the session to start clean."
+            )
         # The start is the session's time too. Unbilled, a recovery cost one
         # kernel start the budget never saw, and `cas_session_seconds` bounded
         # total wall clock plus a start per death rather than total wall clock.
@@ -570,26 +603,6 @@ class CasSession:
                 "Reset the session to start clean."
             )
         return RebuildReport.from_checks(checks)
-
-    def _refuse_lost_effects(self) -> None:
-        """Refuse a rebuild that could not include everything the kernel held.
-
-        Unaccepted live cells can mutate the namespace before returning.
-        Replaying only accepted cells cannot recover those effects, even when
-        later accepted cells produce the same output. Require an explicit reset.
-        """
-        unreplayed = [
-            record.seq
-            for record in self.cells()
-            if not record.accepted and record.kernel_lost is not True
-            and record.status not in {"timeout", "kernel_died"}
-        ]
-        if unreplayed:
-            raise self._poisoned(
-                "CAS state did not reproduce: unaccepted cell(s) "
-                f"{unreplayed} may have changed the live state. "
-                "Reset the session to start clean."
-            )
 
     def _replay_for_rebuild(self, record: CellRecord) -> ReplayCheck:
         """Replay one accepted cell into the rebuilding kernel, and judge it."""
@@ -648,7 +661,7 @@ class CasSession:
         with self._lock:
             self._require_owner()
             self._drop_kernel()
-            self.state = "cold"
+            self.state = KernelState.COLD
             self._append(
                 CellRecord(
                     seq=len(self._journal.records),
@@ -664,11 +677,11 @@ class CasSession:
             )
 
     def close(self) -> None:
+        """Stop the kernel and give up the log; a closed session never reopens."""
         with self._lock:
-            if self._closed:
+            if self._journal.closed:
                 return
-            self._closed = True
             try:
                 self._exchange.drop()
             finally:
-                self._journal.release()
+                self._journal.close()

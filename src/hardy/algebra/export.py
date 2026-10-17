@@ -122,6 +122,11 @@ def _content_lines(text: str) -> list[str]:
 
 TRANSCRIPT_BEGIN = "«hardy-transcript-begin»"
 TRANSCRIPT_END = "«hardy-transcript-end»"
+# Random bytes in each export's completion marker: enough that no cell prints
+# it by accident.
+_COMPLETION_NONCE_BYTES = 8
+
+
 def completion_marker() -> str:
     """A line the published file prints as its own last statement.
 
@@ -147,7 +152,7 @@ def completion_marker() -> str:
     never reached, `print` rebound to something that swallows it, `__import__`
     broken so the statement raises and the file exits non-zero.
     """
-    return f"«hardy-transcript-finished-{secrets.token_hex(8)}»"
+    return f"«hardy-transcript-finished-{secrets.token_hex(_COMPLETION_NONCE_BYTES)}»"
 
 
 def _after_end_marker(text: str) -> str:

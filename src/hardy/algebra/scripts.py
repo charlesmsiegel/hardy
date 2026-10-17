@@ -52,6 +52,10 @@ class ScriptRun(FrozenModel):
     descendants_unknown: bool = False
 
 
+# How much one drain of a script's output reads at a time.
+_READ_CHUNK_BYTES = 65_536
+
+
 def _drain_capped(pipe: IO[bytes], into: bytearray, cap: int, overflowed: list[bool]) -> None:
     """Read a pipe to its end while keeping at most `cap` bytes.
 
@@ -60,7 +64,7 @@ def _drain_capped(pipe: IO[bytes], into: bytearray, cap: int, overflowed: list[b
     reaches the deadline, and the wait for it never returns.
     """
     try:
-        while chunk := pipe.read1(65_536):
+        while chunk := pipe.read1(_READ_CHUNK_BYTES):
             room = max(0, cap - len(into))
             into.extend(chunk[:room])
             if len(chunk) > room:
