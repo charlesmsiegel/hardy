@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from hardy.formal.lean import SCRATCH_BODY_LINE, scratch_source
 from hardy.formal.syntax import normalise_lean
 
 #: What is tried against the negation. Ordered cheapest first, though they all
@@ -35,12 +36,10 @@ from hardy.formal.syntax import normalise_lean
 #: `norm_num` a false numeric one, `simp` and `tauto` the structural mistakes,
 #: and `exact?` finds a Mathlib lemma that contradicts the statement outright.
 TACTICS = ("decide", "norm_num", "simp", "tauto", "exact?")
-#: The header the probe file needs, whoever supplies it.
-PREAMBLE = "import Mathlib\n\n"
-#: The line the first probe sits on: `import Mathlib`, a blank, then one
+#: The line the first probe sits on: the scratch file's import header, then one
 #: `example` per tactic. The verdict is read off line numbers, so this layout
 #: is part of the contract and is asserted by the tests.
-FIRST_PROBE = 3
+FIRST_PROBE = SCRATCH_BODY_LINE
 #: Its own budget, like the elaboration probe's: `import Mathlib` costs about
 #: twenty seconds warm and minutes cold, and a machine whose first assumption
 #: request happens to be cold must not have this degrade to "unchecked".
@@ -65,11 +64,10 @@ def probe_source(
 ) -> tuple[str, tuple[str, ...]]:
     r"""The Lean file that asks whether anything proves `¬ statement`.
 
-    `imported=False` returns the body without the `import Mathlib` header, for
-    a caller that supplies its own -- `LeanService.check_scratch` prepends one.
-    Either way the file Lean finally elaborates has the import on line 1, a
-    blank on line 2, and the probes from `FIRST_PROBE`, which is the whole
-    contract `judge` reads. Handing `check_scratch` a source that already
+    `imported=False` returns the body without the import header, for a caller
+    that supplies its own -- `LeanService.check_scratch` prepends one. Either
+    way the header is `scratch_source`'s and the probes start at
+    `FIRST_PROBE`, which is the whole contract `judge` reads. Handing `check_scratch` a source that already
     carried an import put a second one on line 3 and shifted every probe by
     two: `judge` then read the sentinel's line as a tactic's, so the staged
     gate could not refute anything and called every honest assumption one that
@@ -103,7 +101,7 @@ def probe_source(
     examples = "\n".join(f"example : ¬ ({text}) := by {tactic}" for tactic in tactics)
     sentinel = f"example : ¬ ({text}) := by sorry"
     body = f"{examples}\n{sentinel}\n"
-    return (f"{PREAMBLE}{body}" if imported else body), tactics
+    return (scratch_source(body) if imported else body), tactics
 
 
 def judge(result: Any, tactics: tuple[str, ...] = TACTICS) -> Verdict:

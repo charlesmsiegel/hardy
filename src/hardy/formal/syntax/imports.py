@@ -19,6 +19,17 @@ IMPORT_PREFIX = re.compile(r"^(?:(?:public|meta|private|protected)\s+)*")
 HEADER_KEYWORDS = frozenset({"prelude", "module"})
 
 
+def import_header(imports: Collection[str]) -> str:
+    """The import header Hardy writes: one `import` per line, then a blank line.
+
+    The inverse of `parse_imports`, and the head of every file Hardy hands
+    Lean. Readers count lines from its height -- the axiom report is read off
+    a file's last line, the refutation probes and declaration checks off the
+    lines after a scratch header -- so it is written in one place.
+    """
+    return "".join(f"import {name}\n" for name in imports) + "\n"
+
+
 class WorkspacePathError(ValueError):
     """A path that is not a Lean module inside the workspace."""
 

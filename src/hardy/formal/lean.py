@@ -8,6 +8,7 @@ Two façades sit on one elaboration core. `LeanTools` serves the interactive
 session and the batch runner, which speak in `Request` and `ToolResult`.
 `LeanService` serves the staged workflow, the final verifier, and the MCP
 server, which speak in `FrozenClaim` and need the full structured result.
+Every file either hands Lean is laid out by `lean_file`.
 """
 
 from __future__ import annotations
@@ -21,7 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from hardy.formal.contracts import EnvironmentIdentity, FrozenClaim, Request
+from hardy.formal.contracts import (
+    DEFAULT_IMPORTS,
+    DeclaredAssumption,
+    EnvironmentIdentity,
+    FrozenClaim,
+    Request,
+)
 from hardy.formal.syntax import (
     ATTRIBUTES,
     DECLARATION_NAME,
@@ -29,6 +36,7 @@ from hardy.formal.syntax import (
     blank_bounded_quotations,
     declared_name,
     declares_tokens,
+    import_header,
     lex,
 )
 from hardy.foundation.files import WriteGuard, normalize_newlines
@@ -290,10 +298,17 @@ class LeanToolResult(ToolResult):
         }
 
 
-def render_theorem(
-    claim: FrozenClaim, proof_body: str, allowed: Sequence[Any] = ()
+def lean_file(
+    imports: Sequence[str], body: str, assumptions: Sequence[DeclaredAssumption] = ()
 ) -> str:
-    """The claim as one Lean file, with any declared assumptions in scope.
+    """One Lean file as Hardy lays it out: the imports, any declared assumptions, then `body`.
+
+    Every file Hardy writes for Lean is laid out here -- the theorem a frozen
+    claim names, the one a request names, a scratch check -- so an import or a
+    declared assumption reaches every path at once rather than one renderer at
+    a time. `body` is placed verbatim; how a theorem and its proof are spelled
+    is the caller's, because the recorded-run readers rebuild each spelling
+    byte for byte.
 
     The declarations go *after* the imports, because Lean 4 admits `import`
     only in the module header: a command above it is `invalid 'import'
@@ -301,6 +316,19 @@ def render_theorem(
     first produced a file that could not parse at all, so every run that
     declared an assumption failed verification on a syntax error rather than
     on its mathematics.
+    """
+    header = import_header(imports)
+    declarations = "".join(
+        f"axiom {item.name} : {item.statement.strip()}\n" for item in assumptions
+    )
+    # A blank line closes the declarations, as one closes the imports.
+    return f"{header}{declarations}\n{body}" if declarations else f"{header}{body}"
+
+
+def render_theorem(
+    claim: FrozenClaim, proof_body: str, allowed: Sequence[DeclaredAssumption] = ()
+) -> str:
+    """The claim as one Lean file, with any declared assumptions in scope.
 
     Both the in-loop check and the independent verifier render through here,
     so the environment a proof is written against is the environment it is
@@ -308,17 +336,12 @@ def render_theorem(
     citing one got `unknown identifier` from every official check and could
     never be submitted.
     """
-    imports = "".join(f"import {name}\n" for name in claim.imports)
-    declarations = "".join(
-        f"axiom {item.name} : {item.statement.strip()}\n" for item in allowed
-    )
     binders = f" {claim.proposal.binders.strip()}" if claim.proposal.binders.strip() else ""
     signature = (
         f"theorem {claim.proposal.theorem_name}{binders} : "
         f"{claim.proposal.proposition.strip()} :="
     )
-    head = f"{imports}\n{declarations}\n" if declarations else f"{imports}\n"
-    return f"{head}{signature}\n{proof_body.rstrip()}\n"
+    return lean_file(claim.imports, f"{signature}\n{proof_body.rstrip()}\n", allowed)
 
 
 def parse_lean_json(output: str) -> tuple[tuple[LeanDiagnostic, ...], tuple[str, ...]]:
@@ -548,7 +571,7 @@ def environment_identity(
         lean_commit=commit,
         mathlib_revision=mathlib["rev"],
         lake_manifest_sha256=hashlib.sha256(raw).hexdigest(),
-        imports=("Mathlib",),
+        imports=DEFAULT_IMPORTS,
     )
 
 
@@ -656,8 +679,16 @@ class LeanTools:
         return f"{source.rstrip()}\n\n{lines}\n"
 
     def source(self, proof: str, *, audit: bool = False) -> str:
-        imports = "\n".join(f"import {name}" for name in self.request.imports)
-        body = normalize_newlines(f"{imports}\n\n{self.request.declaration} := {proof.strip()}\n")
+        """The request's declaration with `proof` after its `:=`, as a whole file.
+
+        The head is the request's own text rather than a rendered signature,
+        and `hardy accept --recorded` rebuilds this file from the recorded
+        request byte for byte. `audit` appends the axiom report for a
+        declaration that has a name to ask about.
+        """
+        body = normalize_newlines(
+            lean_file(self.request.imports, f"{self.request.declaration} := {proof.strip()}\n")
+        )
         name = self.target_name
         return self.with_audit(body, (f"axioms {name}",)) if audit and name else body
 
@@ -898,22 +929,29 @@ class LeanTools:
         return self._run(self.source(proof))
 
     def search_declaration(self, name: str) -> LeanToolResult:
+        """What Lean says `name` is, under the request's imports."""
         if not DECLARATION_NAME.fullmatch(name):
             return LeanToolResult(False, "search_declaration accepts one Lean declaration name")
-        imports = "\n".join(f"import {item}" for item in self.request.imports)
-        return self._run(f"{imports}\n\n#check {name}\n#print {name}\n")
+        return self._run(lean_file(self.request.imports, f"#check {name}\n#print {name}\n"))
 
 
 def scratch_source(source: str) -> str:
-    """The file `check_scratch` elaborates: the Mathlib header, then the body.
+    """The file `check_scratch` elaborates: the default import header, then the body.
 
     A function rather than a format string inside the method because
     `refute`'s verdict is read off which *line* an error landed on, so the
     header's height is part of a contract two modules and their tests share.
     Doubles that spelled it out for themselves asserted on their own
     arithmetic, and stayed green while production shifted by a line.
+    `SCRATCH_BODY_LINE` is that height, counted rather than restated.
     """
-    return f"import Mathlib\n\n{source.rstrip()}\n"
+    return lean_file(DEFAULT_IMPORTS, f"{source.rstrip()}\n")
+
+
+#: The line a scratch file's body starts on: where `refute`'s first probe and
+#: `inspect_declarations`' first `#check` stand, and so where each reads its
+#: verdicts from.
+SCRATCH_BODY_LINE = import_header(DEFAULT_IMPORTS).count("\n") + 1
 
 
 class LeanService:
@@ -954,7 +992,7 @@ class LeanService:
         return self._lean_project
 
     def check_proof(
-        self, claim: FrozenClaim, proof_body: str, allowed: Sequence[Any] = ()
+        self, claim: FrozenClaim, proof_body: str, allowed: Sequence[DeclaredAssumption] = ()
     ) -> LeanCheckResult:
         return self._check_source(render_theorem(claim, proof_body, allowed))
 
@@ -1001,9 +1039,9 @@ class LeanService:
         # `#check Nope` is an error, so a batch with an unknown name has
         # `check.success=False` while having answered: the diagnostic Lean
         # printed for it carries `severity="error"` on the `#check` line that
-        # produced it. `check_scratch` renders `import Mathlib\n\n` followed
-        # by one `#check` per name starting at line 3, so those are lines
-        # `range(3, 3 + len(names))`. An error anywhere else -- on line 1
+        # produced it. `check_scratch` renders the import header followed by
+        # one `#check` per name starting at `SCRATCH_BODY_LINE`, so those are
+        # the lines checked here. An error anywhere else -- in the header
         # because `import Mathlib` itself failed, unplaced because the
         # process only left stderr behind, or preceding the `#check` block
         # for some other reason -- is not an answer about these names, and
@@ -1012,7 +1050,7 @@ class LeanService:
         # spelling evidence when Lean never got as far as looking any of them
         # up. An overflowed process is in the same position: whatever
         # diagnostics survived are not the whole batch.
-        check_lines = range(3, 3 + len(names))
+        check_lines = range(SCRATCH_BODY_LINE, SCRATCH_BODY_LINE + len(names))
         errors = [item for item in check.diagnostics if item.severity == "error"]
         answered = (
             not check.process.output_overflow
