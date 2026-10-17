@@ -43,14 +43,10 @@ from hardy.documents.syntax import (
     uncertain_conditionals,
     unreached_fragments,
 )
-from hardy.documents.syntax import BEGIN_DOCUMENT as BEGIN_DOCUMENT
-from hardy.documents.syntax import INCLUSION as INCLUSION
-from hardy.documents.syntax import INLINE_VERBATIM as INLINE_VERBATIM
-from hardy.documents.syntax import VERBATIM_ENVIRONMENT as VERBATIM_ENVIRONMENT
+
+# Re-exported for `workflows.interactive`, which imports them from here.
 from hardy.documents.syntax import compiles_document as compiles_document
-from hardy.documents.syntax import typeset as typeset
 from hardy.documents.syntax import uncommented as uncommented
-from hardy.documents.syntax import unfinished_definition as unfinished_definition
 from hardy.foundation.files import (
     LayoutError,
     WriteGuard,
