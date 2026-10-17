@@ -449,9 +449,10 @@ _ASKED, _INSISTED = 1, 2
 class _Register:
     """Every child a stop can reach, and the stop in force. One per process.
 
-    Every field is read and written under `lock`, so a child registering is
-    either in the snapshot a sweep takes or sees the level the sweep set.
-    Signals go out after the lock is released.
+    Every field is written under `lock`, and read under it everywhere but
+    `tracked`'s check of `detached`, which says why it need not be. So a child
+    registering is either in the snapshot a sweep takes or sees the level the
+    sweep set. Signals go out after the lock is released.
     """
 
     lock: threading.Lock = field(default_factory=threading.Lock)
