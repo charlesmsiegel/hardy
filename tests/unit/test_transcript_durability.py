@@ -81,7 +81,7 @@ def test_hard_process_exit_preserves_checkpoint_or_inflight_tool_and_recovers_sp
         else:
             runtime = ClaudeAgentRuntime("scripted", system_prompt="test", specs=[], dispatch=lambda *args: None,
                 observe=record._record, checkpoint_seconds=0)
-            runtime._draw(0, "The unfinished α proof 🧮")
+            runtime._text.draw(0, "The unfinished α proof 🧮")
             if sys.argv[2] == "torn":
                 with record.transcript_path.open("ab") as stream:
                     stream.write(b'{"type":"assistant","message":{"content":"' + bytes([0xf0, 0x9f]))

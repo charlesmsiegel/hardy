@@ -218,7 +218,7 @@ def test_a_call_the_hook_denies_and_the_stream_also_sees_is_recorded_once():
     """
     seen: list[dict] = []
     live = runtime(observe=seen.append)
-    asyncio.run(live._gate({"tool_name": "TaskCreate", "tool_input": {}}, "call-9", None))
+    asyncio.run(live._tools.gate({"tool_name": "TaskCreate", "tool_input": {}}, "call-9", None))
     list(live._note(AssistantMessage(ToolUseBlock("TaskCreate", "call-9")), []))
     refused = [event for event in seen if event["type"] == "refused_tool"]
     assert refused == [{"type": "refused_tool", "name": "TaskCreate", "via": "hook"}]
@@ -230,7 +230,7 @@ def test_the_same_call_seen_by_the_stream_first_and_then_denied_by_the_hook_is_r
     seen: list[dict] = []
     live = runtime(observe=seen.append)
     list(live._note(AssistantMessage(ToolUseBlock("TaskCreate", "call-9")), []))
-    asyncio.run(live._gate({"tool_name": "TaskCreate", "tool_input": {}}, "call-9", None))
+    asyncio.run(live._tools.gate({"tool_name": "TaskCreate", "tool_input": {}}, "call-9", None))
     refused = [event for event in seen if event["type"] == "refused_tool"]
     assert refused == [{"type": "refused_tool", "name": "TaskCreate", "via": "stream"}]
 
@@ -251,8 +251,8 @@ def test_a_hook_refusal_with_no_tool_use_id_is_never_dropped():
     it on -- so it must always be recorded rather than silently swallowed."""
     seen: list[dict] = []
     live = runtime(observe=seen.append)
-    asyncio.run(live._gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
-    asyncio.run(live._gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
+    asyncio.run(live._tools.gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
+    asyncio.run(live._tools.gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
     refused = [event for event in seen if event["type"] == "refused_tool"]
     assert len(refused) == 2
 
@@ -583,7 +583,7 @@ def test_a_timed_out_provider_cannot_publish_into_the_next_turn(late_stage):
         old_worker.join(2)
         assert not old_worker.is_alive()
         assert live._client is new
-        assert [block.text for block in live._drawn] == ["new"]
+        assert [block.text for block in live._text.blocks] == ["new"]
         assert not any(event["type"] == "result" for event in seen)
         if late_stage == "connect":
             assert old.asked is None
@@ -868,19 +868,19 @@ def test_checkpoint_interval_never_writes_unchanged_text_again(monkeypatch):
     now = [10.0]
     monkeypatch.setattr(claude_runtime.time, "monotonic", lambda: now[0])
     live = runtime(observe=seen.append, checkpoint_seconds=2)
-    live._checkpointed_at = now[0]
-    live._draw(0, "α")
+    live._text.checkpointed_at = now[0]
+    live._text.draw(0, "α")
     now[0] = 11.9
-    live._checkpoint()
+    live._text.checkpoint()
     assert not seen
     now[0] = 12.0
-    live._checkpoint()
+    live._text.checkpoint()
     assert len(seen) == 1
     now[0] = 14.0
-    live._checkpoint()
+    live._text.checkpoint()
     assert len(seen) == 1
-    live._draw(0, "β")
-    live._checkpoint()
+    live._text.draw(0, "β")
+    live._text.checkpoint()
     assert len(seen) == 2 and seen[-1]["message"]["content"] == "αβ"
 
 
