@@ -244,6 +244,7 @@ export default function Publications({arg}) {
                       key="output"
                       type="text"
                       className="wb-publications__input"
+                      aria-label="bundle name"
                       value={outputName}
                       placeholder="bundle-name"
                       onChange={(event) => setOutputName(event.target.value)}

@@ -140,6 +140,7 @@ export default function Landing({status, projects, setProjects, refreshProjects}
           <Label>New project</Label>
           <input
             className="wb-switcher__input"
+            aria-label="project name"
             placeholder="project name"
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -147,6 +148,7 @@ export default function Landing({status, projects, setProjects, refreshProjects}
           />
           <input
             className="wb-switcher__input"
+            aria-label="project location"
             placeholder={`location (default ${status.default_root || ''})`}
             title="the directory the project is created under; leave empty for the default"
             value={location}
@@ -159,6 +161,7 @@ export default function Landing({status, projects, setProjects, refreshProjects}
           <Label>Add existing</Label>
           <input
             className="wb-switcher__input"
+            aria-label="project folder to add"
             placeholder="path to a Hardy project, or a folder holding several"
             value={path}
             onChange={(event) => setPath(event.target.value)}

@@ -262,6 +262,7 @@ export default function ProjectSwitcher({status, projects, setProjects, refreshP
               <input
                 className="wb-switcher__input"
                 autoFocus
+                aria-label="project name"
                 placeholder="project name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
@@ -269,6 +270,7 @@ export default function ProjectSwitcher({status, projects, setProjects, refreshP
               />
               <input
                 className="wb-switcher__input wb-switcher__input--wide"
+                aria-label="project location"
                 placeholder={`location (default ${status.default_root || ''})`}
                 title="the directory the project is created under; leave empty for the default"
                 value={location}
@@ -283,6 +285,7 @@ export default function ProjectSwitcher({status, projects, setProjects, refreshP
               <input
                 className="wb-switcher__input wb-switcher__input--wide"
                 autoFocus
+                aria-label="project folder to add"
                 placeholder="path to a Hardy project, or a folder holding several"
                 value={path}
                 onChange={(event) => setPath(event.target.value)}

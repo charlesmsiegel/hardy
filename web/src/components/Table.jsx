@@ -5,6 +5,21 @@
 // current selection. `rows` is `[{key, cells: [node, ...]}, ...]` so a page
 // can put whatever it wants in a cell -- a <Pill/>, an <Absent/>, a link --
 // without this component ever inspecting it.
+//
+// A pickable row is a tab stop that Enter or Space picks, the way a click
+// does: the row is the control, so a keyboard has to be able to reach and
+// operate it. It stays a <tr> -- a role on it would take it out of the table
+// -- and says whether it is the current selection with `aria-selected`.
+
+/** Enter and Space pick the row, but only when the row itself has focus: a key
+ *  pressed in a link or button inside a cell belongs to that control, and
+ *  picking the row as well would act twice on one keystroke. */
+function pickOnKey(event, pick) {
+  if (event.target !== event.currentTarget) return;
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  pick();
+}
 
 export default function Table({head, rows, onPick, selected}) {
   return (
@@ -25,7 +40,10 @@ export default function Table({head, rows, onPick, selected}) {
             <tr
               key={row.key}
               className={classes.join(' ')}
+              tabIndex={onPick ? 0 : undefined}
+              aria-selected={onPick ? row.key === selected : undefined}
               onClick={onPick ? () => onPick(row.key) : undefined}
+              onKeyDown={onPick ? (event) => pickOnKey(event, () => onPick(row.key)) : undefined}
             >
               {row.cells.map((cell, i) => (
                 <td key={i}>{cell}</td>

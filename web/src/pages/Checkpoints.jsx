@@ -91,6 +91,7 @@ function SaveControl({name, onName, send, populated}) {
         <input
           type="text"
           className="wb-checkpoints__input"
+          aria-label="checkpoint name"
           value={name}
           placeholder="before-assembling-cases"
           onChange={(event) => onName(event.target.value)}

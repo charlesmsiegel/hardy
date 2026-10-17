@@ -297,6 +297,34 @@ textarea:focus {
   padding: 2px var(--space-2);
 }
 
+/* A list row that is also a control -- a file, a tree entry -- is a <button>
+   so a keyboard reaches it and Enter or Space opens it, but it keeps the look
+   of the row it was: this takes a button's own drawing off and nothing else.
+   `button:where(...)` is the weight of the bare `button` rule above, which it
+   must beat for the font, and still lighter than any class the row also
+   carries, so that class's padding, background and display stand. The ring
+   hugs the row instead of standing off it: these rows are packed edge to edge
+   and a file at the top level has no left padding, so an inset ring would be
+   drawn over its first letter. */
+button:where(.wb-rowbutton) {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  letter-spacing: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: start;
+  width: 100%;
+}
+
+.wb-rowbutton:focus-visible {
+  outline-offset: 0;
+}
+
 /* A labelled control: the label above, the control, then a hint. The label
    is a real `<label>` (or the `<legend>` of a fieldset), never a
    placeholder standing in for one. */
@@ -927,6 +955,10 @@ select.picker {
 
 .vtable__row--pick {
   cursor: pointer;
+}
+
+.vtable__row--pick:focus-visible {
+  outline-offset: -2px;
 }
 
 .vtable__row--selected {

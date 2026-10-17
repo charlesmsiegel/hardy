@@ -191,9 +191,15 @@ export default function Tree() {
             </svg>
             <div className="wb-tree__rows">
               {built.rows.map(({entry, row}) => (
-                <div
+                <button
                   key={entry.entry_id}
-                  className={entry.entry_id === selected ? 'wb-tree__row wb-tree__row--selected' : 'wb-tree__row'}
+                  type="button"
+                  className={
+                    entry.entry_id === selected
+                      ? 'wb-tree__row wb-tree__row--selected wb-rowbutton'
+                      : 'wb-tree__row wb-rowbutton'
+                  }
+                  aria-current={entry.entry_id === selected ? 'true' : undefined}
                   style={{paddingLeft: svgWidth, height: ROW}}
                   onClick={() => setSelectedId(entry.entry_id)}
                 >
@@ -208,7 +214,7 @@ export default function Tree() {
                   <span className="wb-tree__row-when">
                     <Absent kind="unreported" />
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           </div>

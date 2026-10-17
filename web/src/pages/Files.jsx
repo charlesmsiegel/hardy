@@ -170,6 +170,10 @@ function kindOf(path, data) {
   return null;
 }
 
+/** A file row is a <button> (so Tab reaches it and Enter opens it) dressed as
+ *  the row it always was; `wb-rowbutton` only takes the button's own drawing off. */
+const fileRowClass = (on) => (on ? 'wb-files__row wb-files__row--on wb-rowbutton' : 'wb-files__row wb-rowbutton');
+
 function TreeSection({def: treeDef, count, rows, envChecks, selected, onPick}) {
   return (
     <div className="wb-files__tree">
@@ -189,15 +193,17 @@ function TreeSection({def: treeDef, count, rows, envChecks, selected, onPick}) {
           {rows.map((row) => {
             const {stripped, depth} = tail(row.path, treeDef.key);
             return (
-              <div
+              <button
                 key={row.path}
-                className={row.path === selected ? 'wb-files__row wb-files__row--on' : 'wb-files__row'}
+                type="button"
+                className={fileRowClass(row.path === selected)}
+                aria-current={row.path === selected ? 'true' : undefined}
                 style={{paddingLeft: depth * 12}}
                 onClick={() => onPick(row.path)}
               >
                 <span className="wb-files__row-name">{stripped}</span>
                 <RowMeta row={row} />
-              </div>
+              </button>
             );
           })}
         </div>
@@ -215,14 +221,16 @@ function PdfSection({count, rows, selected, onPick}) {
       {rows.length ? (
         <div className="wb-files__rows">
           {rows.map((row) => (
-            <div
+            <button
               key={row.path}
-              className={row.path === selected ? 'wb-files__row wb-files__row--on' : 'wb-files__row'}
+              type="button"
+              className={fileRowClass(row.path === selected)}
+              aria-current={row.path === selected ? 'true' : undefined}
               onClick={() => onPick(row.path)}
             >
               <span className="wb-files__row-name">{row.path}</span>
               <RowMeta row={row} />
-            </div>
+            </button>
           ))}
         </div>
       ) : (
@@ -394,6 +402,7 @@ function CasViewer({path, revision}) {
         <div className="wb-rail__scratch">
           <input
             className="wb-rail__input"
+            aria-label="new CAS cell"
             placeholder="Order(SymmetricGroup(4));"
             spellCheck={false}
             value={composed}

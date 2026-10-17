@@ -207,6 +207,7 @@ export function Scratch({path, imports}) {
       <div className="wb-rail__scratch">
         <input
           className="wb-rail__input"
+          aria-label="Lean expression to check"
           placeholder="#check Sylow.card_modEq_one"
           value={line}
           spellCheck={false}
