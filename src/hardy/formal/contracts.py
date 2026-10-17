@@ -72,19 +72,25 @@ class FormalizationContext(FrozenModel):
     generated_binders: tuple[GeneratedBinder, ...] = ()
 
 
+#: What a pinned environment, a frozen claim and a request import unless they
+#: name their own: all of Mathlib. One constant, so an environment that pins
+#: something else is a value to pass rather than a literal to hunt for.
+DEFAULT_IMPORTS: tuple[str, ...] = ("Mathlib",)
+
+
 class EnvironmentIdentity(FrozenModel):
     lean_version: str
     lean_commit: str
     mathlib_revision: str
     lake_manifest_sha256: str
-    imports: tuple[str, ...] = ("Mathlib",)
+    imports: tuple[str, ...] = DEFAULT_IMPORTS
 
 
 class FrozenClaim(FrozenModel):
     original_text: str
     proposal: FormalizationProposal
     environment: EnvironmentIdentity
-    imports: tuple[str, ...] = ("Mathlib",)
+    imports: tuple[str, ...] = DEFAULT_IMPORTS
     approved_at: datetime
     content_hash: str
     semantic_context: FormalizationContext | None = None
@@ -212,7 +218,7 @@ DECLARATION_KEYWORD = re.compile(rf"^{ATTRIBUTES}{MODIFIERS}(?:theorem|lemma|exa
 class Request:
     declaration: str
     informal_claim: str
-    imports: tuple[str, ...] = ("Mathlib",)
+    imports: tuple[str, ...] = DEFAULT_IMPORTS
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Request:
@@ -225,7 +231,7 @@ class Request:
         # unreachable -- the request never got that far.
         if not DECLARATION_KEYWORD.match(declaration):
             raise ValueError("declaration must begin with theorem, lemma, or example")
-        imports = tuple(str(item).strip() for item in value.get("imports", ["Mathlib"]))
+        imports = tuple(str(item).strip() for item in value.get("imports", DEFAULT_IMPORTS))
         if not imports or any(not item for item in imports):
             raise ValueError("imports must be a non-empty list")
         return cls(declaration, str(value["informal_claim"]).strip(), imports)
