@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from hardy.algebra.backends import CasBackend
 from hardy.algebra.contracts import (
     MERGED_CAPTURE_NOTE,
     CasError,
@@ -299,17 +300,17 @@ def _markers(statements: tuple[str, ...], finished: str = "") -> list[str]:
     ]
 
 
-def _wants_completion(backend: Any) -> bool:
+def _wants_completion(backend: CasBackend) -> bool:
     """Whether this backend's last statement is the one that says it finished.
 
     Only where the closing marker is a shutdown hook. Singular and Macaulay2
     print theirs from the foot of the file, so an interpreter that stopped
     early never prints it and `_between_markers` already has nothing to cut.
     """
-    return "{finished}" in "".join(getattr(backend, "transcript_epilogue", ()))
+    return "{finished}" in "".join(backend.transcript_epilogue)
 
 
-def _without_chrome(backend: Any, text: str) -> str:
+def _without_chrome(backend: CasBackend, text: str) -> str:
     """Drop the lines an interpreter is *known* to write on its own account.
 
     stdout is bracketed by markers the script prints itself, which is the
@@ -323,7 +324,7 @@ def _without_chrome(backend: Any, text: str) -> str:
     where it gets added -- rather than as an export quietly accepting whatever
     appeared.
     """
-    patterns = getattr(backend, "script_stderr_chrome", ())
+    patterns = backend.script_stderr_chrome
     if not patterns:
         return text
     return "\n".join(
@@ -437,7 +438,7 @@ def _verify_script(
     remaining = session.remaining_seconds
     if remaining <= 0:
         return "unverified", "the session budget ran out before the script could be run"
-    capture_mode = "merged" if session.backend.framing == "sentinel" else "separate"
+    capture_mode = session.backend.capture_mode
     if any(record.capture_mode != capture_mode for record in cells):
         return "unverified", (
             "the recorded capture mode differs from the script runner; identical "
@@ -512,13 +513,9 @@ def _verify_script(
     # echoes back into its own transcript -- including Hardy's header and the
     # per-cell notes, which the session never printed and which sit between one
     # cell's output and the next.
-    fed = (
-        published.decode("utf-8", errors="replace")
-        if getattr(session.backend, "script_stdin", False)
-        else ""
-    )
+    fed = published.decode("utf-8", errors="replace") if session.backend.script_stdin else ""
     stdout = session.backend.sanitize(run.stdout, fed)
-    pattern = getattr(session.backend, "error_pattern", None)
+    pattern = session.backend.error_pattern
     if pattern is not None and (pattern.search(stdout) or pattern.search(run.stderr)):
         # A sentinel interpreter reports an error and carries on with the next
         # line, so a broken script still exits 0. The banner is the exit code.
@@ -661,7 +658,7 @@ def render_script(
     # in practice -- a cell printing a set or a string-keyed dict orders it by
     # the interpreter's per-process hash seed, so an unpinned reader can see a
     # different order from the one recorded and checked.
-    environment = getattr(backend, "environment", {})
+    environment = backend.environment
     if environment:
         setting = " ".join(f"{key}={value}" for key, value in sorted(environment.items()))
         lines += [
@@ -925,8 +922,8 @@ def _export_held(session: CasSession, directory: Path, *,
         # the default backend means `PYTHONHASHSEED=0`, since a set or a
         # string-keyed dict prints in a different order under a different seed.
         # Recorded here and named in the script's own header.
-        "environment": dict(getattr(session.backend, "environment", {})),
-        "capture_mode": "merged" if session.backend.framing == "sentinel" else "separate",
+        "environment": dict(session.backend.environment),
+        "capture_mode": session.backend.capture_mode,
         "counts": counts,
         "script_verdict": script_verdict[0],
         "script_detail": script_verdict[1],

@@ -5,8 +5,8 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any
 
+from hardy.algebra.backends import CasBackend
 from hardy.algebra.contracts import CasError, CellOutcome, CellRecord
 from hardy.algebra.operations import OperationControl
 from hardy.algebra.session import CasSession
@@ -15,7 +15,7 @@ from hardy.workflows.contracts import RunLimits
 
 def replay_in_fresh_kernel(
     *,
-    backend: Any,
+    backend: CasBackend,
     command: Path | None,
     cells: Sequence[CellRecord],
     limits: RunLimits,

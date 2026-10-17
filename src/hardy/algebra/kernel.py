@@ -6,11 +6,11 @@ import os
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import IO
 
-from hardy.algebra.contracts import INTERRUPTED, TIMED_OUT
+from hardy.algebra.contracts import INTERRUPTED, TIMED_OUT, Extractor, ReadFailure, Reply
 from hardy.foundation.process import (
     INTERRUPT_GRACE_SECONDS,
     child_creation,
@@ -22,8 +22,25 @@ from hardy.foundation.process import (
     tree_has_members,
 )
 
+# How much one drain read takes from a pipe. Also the width of the window the
+# end-marker scan keeps beyond the marker itself: a marker can straddle two
+# reads, and no read is longer than this.
+_READ_CHUNK_BYTES = 4_096
+# How often a wait for a reply looks again. Nothing notifies the reader when
+# an interrupt is asked for on another thread, so this also bounds how long it
+# takes to notice one.
+_POLL_SECONDS = 0.05
+# How long a polite teardown waits at each step: for the child to exit after
+# SIGTERM, to be reaped after SIGKILL, and for a Windows job to release its
+# handles.
+_SETTLE_SECONDS = 2
 
-class _Kernel:
+
+def _is_set(event: threading.Event | None) -> bool:
+    return event is not None and event.is_set()
+
+
+class Kernel:
     """One live child, drained by threads so a deadline can always be enforced."""
 
     def __init__(
@@ -31,7 +48,7 @@ class _Kernel:
         argv: Sequence[str],
         cwd: Path,
         max_output_bytes: int,
-        environment: dict[str, str] | None = None,
+        environment: Mapping[str, str] | None = None,
         *,
         merge_stderr: bool = False,
     ) -> None:
@@ -76,7 +93,7 @@ class _Kernel:
         # it did before any job existed. Closing it would take a suspended
         # start (`CREATE_SUSPENDED`, assign, resume), which is not done.
         contain(self.process)
-        self._readers: list[tuple[object, threading.Thread]] = []
+        self._readers: list[tuple[IO[bytes], threading.Thread]] = []
         for pipe, destination in ((self.process.stdout, self.out), (self.process.stderr, self.err)):
             if pipe is not None:
                 reader = threading.Thread(target=self._drain, args=(pipe, destination), daemon=True)
@@ -84,33 +101,22 @@ class _Kernel:
                 reader.start()
 
     def _drain(self, pipe, destination: bytearray) -> None:
-        # read1, not read: a buffered `read(n)` blocks until it has all n bytes
-        # or the stream ends, and a persistent kernel never ends. The reply to
-        # a small cell would sit in the pipe unread forever.
+        # A stream closed under a `read1` already in flight does not politely
+        # return b"" -- it raises, on a thread with nobody to catch it, and
+        # Python prints the traceback to stderr as if Hardy had crashed.
+        # `_drain_capped` has suppressed exactly this pair since it was
+        # written; there is no reason for the two drains to disagree. The
+        # stream is over either way, which is what the `finally` records.
         try:
-            while chunk := pipe.read1(4_096):
-                with self._changed:
-                    room = max(0, self.max_output_bytes - len(destination))
-                    destination.extend(chunk[:room])
-                    if len(chunk) > room:
-                        self.truncated = True
-                    # Retention stops at the cap; scanning does not. A sentinel
-                    # backend that overran the cap would otherwise never be seen
-                    # to finish, and a large answer would read as a dead kernel.
-                    if self._marker and destination is self.out:
-                        self._tail = (self._tail + chunk)[-(len(self._marker) + 4_096) :]
-                        if self._marker in self._tail:
-                            self.marker_seen = True
-                    self._changed.notify_all()
-        except (OSError, ValueError):
-            # A stream closed under a `read1` already in flight does not
-            # politely return b"" -- it raises, on a
-            # thread with nobody to catch it, and Python prints the traceback
-            # to stderr as if Hardy had crashed. `_drain_capped` has caught
-            # exactly this pair since it was written; there is no reason for
-            # the two drains to disagree. The stream is over either way, which
-            # is what the `finally` below records.
-            pass
+            with contextlib.suppress(OSError, ValueError):
+                # read1, not read: a buffered `read(n)` blocks until it has all
+                # n bytes or the stream ends, and a persistent kernel never
+                # ends. The reply to a small cell would sit in the pipe unread
+                # forever.
+                while chunk := pipe.read1(_READ_CHUNK_BYTES):
+                    with self._changed:
+                        self._keep(chunk, destination)
+                        self._changed.notify_all()
         finally:
             # The reader owns this stream until EOF, including when a helper
             # escaped the process group and still holds its write end.
@@ -121,6 +127,20 @@ class _Kernel:
             with self._changed:
                 self._finished += 1
                 self._changed.notify_all()
+
+    def _keep(self, chunk: bytes, destination: bytearray) -> None:
+        """Retain what fits under the cap, and scan stdout for the end marker."""
+        room = max(0, self.max_output_bytes - len(destination))
+        destination.extend(chunk[:room])
+        if len(chunk) > room:
+            self.truncated = True
+        # Retention stops at the cap; scanning does not. A sentinel backend
+        # that overran the cap would otherwise never be seen to finish, and a
+        # large answer would read as a dead kernel.
+        if self._marker and destination is self.out:
+            self._tail = (self._tail + chunk)[-(len(self._marker) + _READ_CHUNK_BYTES) :]
+            if self._marker in self._tail:
+                self.marker_seen = True
 
     def clear(self, marker: bytes = b"") -> None:
         """Discard everything read so far and scan fresh for `marker`.
@@ -178,13 +198,14 @@ class _Kernel:
         sent = False
 
         def write() -> None:
+            # A write that fails leaves `sent` false, and that is the whole
+            # report: the caller treats an undelivered frame as a lost kernel.
             nonlocal sent
             try:
-                stdin.write(payload)
-                stdin.flush()
-                sent = True
-            except (BrokenPipeError, OSError, ValueError):
-                pass
+                with contextlib.suppress(OSError, ValueError):
+                    stdin.write(payload)
+                    stdin.flush()
+                    sent = True
             finally:
                 with self._input_lock:
                     self._input_writers -= 1
@@ -207,10 +228,10 @@ class _Kernel:
 
     def read_reply(
         self,
-        extract: Callable[[bytes], Any],
+        extract: Extractor,
         deadline: float,
         interrupted: threading.Event | None = None,
-    ) -> Any:
+    ) -> Reply | ReadFailure | None:
         """Wait for a complete reply, the kernel's death, the deadline, or a stop.
 
         The extractor sees raw bytes. Decoding first would make a partial
@@ -228,17 +249,14 @@ class _Kernel:
         """
         with self._changed:
             grace_deadline: float | None = None
-            while True:
-                found = extract(bytes(self.out))
-                # Checked before the interrupt, so a cell that finished in the
-                # same instant Esc was pressed is reported as what it did
-                # rather than as what the user asked for a moment too late.
-                if found is not None:
-                    return found
+            # Checked before the interrupt, so a cell that finished in the same
+            # instant Esc was pressed is reported as what it did rather than as
+            # what the user asked for a moment too late.
+            while (found := extract(bytes(self.out))) is None:
                 if self._finished >= self._reader_count:
                     return None
                 now = time.monotonic()
-                if interrupted is not None and interrupted.is_set() and grace_deadline is None:
+                if grace_deadline is None and _is_set(interrupted):
                     grace_deadline = now + INTERRUPT_GRACE_SECONDS
                 stop_at = deadline if grace_deadline is None else min(deadline, grace_deadline)
                 remaining = stop_at - now
@@ -247,13 +265,9 @@ class _Kernel:
                     # cell's own deadline happened to pass while the kernel was
                     # being given its grace. The user stopped this; calling it
                     # a timeout would credit the limit for what Esc did.
-                    if interrupted is not None and interrupted.is_set():
-                        return INTERRUPTED
-                    return TIMED_OUT
-                # Nothing notifies this condition when the interrupt flag is
-                # set on another thread, so the poll interval is also what
-                # bounds how long it takes to notice one.
-                self._changed.wait(min(remaining, 0.05))
+                    return INTERRUPTED if _is_set(interrupted) else TIMED_OUT
+                self._changed.wait(min(remaining, _POLL_SECONDS))
+            return found
 
     def stderr_text(self) -> str:
         with self._changed:
@@ -292,24 +306,36 @@ class _Kernel:
             try:
                 # SIGKILL cannot be caught, so the immediate path is only ever
                 # waiting to reap; the polite one is waiting on the child.
-                self.process.wait(timeout=0 if immediate else 2)
+                self.process.wait(timeout=0 if immediate else _SETTLE_SECONDS)
             except subprocess.TimeoutExpired:
                 kill_group(self.process)
                 with contextlib.suppress(subprocess.TimeoutExpired):
-                    self.process.wait(timeout=2)
+                    self.process.wait(timeout=_SETTLE_SECONDS)
         # SIGTERM taking the leader is not proof its helpers stopped.
         kill_group(self.process)
         if os.name == "nt" and not immediate:
-            # TerminateJobObject returns before its members have released their
-            # handles. The venv launcher exiting is not proof its interpreter
-            # has released cwd; close must settle that job before a rename.
-            deadline = time.monotonic() + 2
-            while tree_has_members(self.process) is True and time.monotonic() < deadline:
-                time.sleep(0.01)
-            for _, reader in self._readers:
-                reader.join(timeout=max(0, deadline - time.monotonic()))
-        # Closing a BufferedReader still owned by read1 would wait without a
-        # deadline. Its daemon reader closes it itself when the holder exits.
+            self._settle_job()
+        self._close_released_streams()
+
+    def _settle_job(self) -> None:
+        """Wait, briefly, for a terminated Windows job to let go of its handles.
+
+        TerminateJobObject returns before its members have released their
+        handles. The venv launcher exiting is not proof its interpreter has
+        released cwd; close must settle that job before a rename.
+        """
+        deadline = time.monotonic() + _SETTLE_SECONDS
+        while tree_has_members(self.process) is True and time.monotonic() < deadline:
+            time.sleep(0.01)
+        for _, reader in self._readers:
+            reader.join(timeout=max(0, deadline - time.monotonic()))
+
+    def _close_released_streams(self) -> None:
+        """Close every stream no thread still holds.
+
+        Closing a BufferedReader still owned by read1 would wait without a
+        deadline. Its daemon reader closes it itself when the holder exits.
+        """
         with self._input_lock:
             streams = [self.process.stdin] if self._input_writers == 0 else []
         streams.extend(pipe for pipe, reader in self._readers if not reader.is_alive())

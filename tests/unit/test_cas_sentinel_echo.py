@@ -12,7 +12,7 @@ import threading
 import pytest
 
 from hardy.algebra.contracts import SENTINEL_BEGIN, SENTINEL_END, CasError
-from hardy.algebra.kernel import _Kernel
+from hardy.algebra.kernel import Kernel
 
 
 def test_a_delayed_stderr_reader_cannot_accept_an_error_or_blame_the_next_cell(
@@ -20,14 +20,14 @@ def test_a_delayed_stderr_reader_cannot_accept_an_error_or_blame_the_next_cell(
 ):
     """The child writes the error before its marker; only parent delivery lags."""
     release = threading.Event()
-    original = _Kernel._drain
+    original = Kernel._drain
 
     def delayed_stderr(self, pipe, destination):
         if pipe is self.process.stderr:
             release.wait(3)
         original(self, pipe, destination)
 
-    monkeypatch.setattr(_Kernel, "_drain", delayed_stderr)
+    monkeypatch.setattr(Kernel, "_drain", delayed_stderr)
     session = echoing_sentinel_session()
     try:
         broken = session.execute("error;")
@@ -118,7 +118,7 @@ def test_a_split_echoed_end_marker_waits_for_its_suffix(
     session = echoing_sentinel_session()
     begin = SENTINEL_BEGIN.format(nonce="split")
     end = SENTINEL_END.format(nonce="split")
-    extract = session._extractor("split")
+    extract = session.backend.extractor(None, "split", "")
     prefix = f'{begin}\nhello\ni3 : ECHO "{end}'.encode()
     partial = prefix + b'";'[:suffix_bytes]
     assert extract(partial) is None
@@ -131,7 +131,7 @@ def test_a_split_echoed_begin_marker_is_not_part_of_the_cell(echoing_sentinel_se
     session = echoing_sentinel_session()
     begin = SENTINEL_BEGIN.format(nonce="split")
     end = SENTINEL_END.format(nonce="split")
-    extract = session._extractor("split")
+    extract = session.backend.extractor(None, "split", "")
     echoed = f'i1 : ECHO "{begin}'.encode()
     assert extract(echoed) is None
     outcome, _ = extract(echoed + f'";\n{begin}\nhello\n{end}\n'.encode())

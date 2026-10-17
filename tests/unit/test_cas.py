@@ -70,7 +70,7 @@ def test_console_shutdown_during_kernel_construction_never_publishes_the_child(c
     session = cas_session()
     entered, release = threading.Event(), threading.Event()
     kernels, errors = [], []
-    original = implementation._Kernel
+    original = implementation.Kernel
 
     def paused_kernel(*args, **kwargs):
         kernel = original(*args, **kwargs)
@@ -85,7 +85,7 @@ def test_console_shutdown_during_kernel_construction_never_publishes_the_child(c
         except CasError as error:
             errors.append(error)
 
-    monkeypatch.setattr(implementation, "_Kernel", paused_kernel)
+    monkeypatch.setattr(implementation, "Kernel", paused_kernel)
     worker = threading.Thread(target=execute)
     worker.start()
     try:
@@ -332,12 +332,14 @@ def test_the_exported_script_run_is_captured_within_the_output_cap(tmp_path) -> 
 class _SlowReaderBackend:
     """A `script_stdin` backend whose interpreter stops reading almost at once.
 
-    Only the two attributes `run_exported_script` actually consults. Singular
-    and Macaulay2 are fed exactly this way, and either can stop consuming
-    stdin -- a cell that computes for a while does it every time.
+    Only the members `run_exported_script` actually consults. Singular and
+    Macaulay2 are fed exactly this way, and either can stop consuming stdin --
+    a cell that computes for a while does it every time.
     """
 
     script_stdin = True
+    capture_mode = "separate"
+    environment: dict[str, str] = {}
 
     def __init__(self, child: Path) -> None:
         self.child = child

@@ -1839,7 +1839,7 @@ def test_a_fault_in_the_driver_itself_is_diagnosable_not_silent(tmp_path) -> Non
     `argv()` always launches `-m hardy.cas_driver` and has no seam for
     injecting a broken hook into that process. What is checked here -- that
     the real OS-level stderr pipe (`subprocess.Popen(..., stderr=PIPE)`, the
-    same pipe `_Kernel.stderr_text()` drains) carries the traceback -- is
+    same pipe `Kernel.stderr_text()` drains) carries the traceback -- is
     exactly the mechanism `session.py` already relies on to build a
     `kernel_died` record's `stderr`, so this proves the fix end to end without
     needing a seam into `session.py`, which issue #311 does not touch.
