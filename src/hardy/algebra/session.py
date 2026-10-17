@@ -436,6 +436,36 @@ class CasSession:
             raise CasError("the CAS session is closing")
         self.state = "live"
 
+    def start_kernel(self) -> None:
+        """Bring up a kernel with nothing replayed into it.
+
+        For a fresh replay, which feeds cells in itself and judges them against
+        some other session's record. This session's own next cell rebuilds
+        from its accepted log instead, through `execute`.
+        """
+        with self._lock:
+            self._start()
+
+    def run_unrecorded(self, source: str, seconds: float) -> CellOutcome:
+        """One round trip in the running kernel, with nothing appended to the log.
+
+        `seconds` is the deadline applied. A replay compares what comes back
+        against a record it already has, so it must not write one of its own.
+        """
+        with self._lock:
+            if self._kernel is None:
+                raise CasError("no CAS kernel is running to replay into")
+            return self._send(source, seconds)
+
+    def remove_log(self) -> None:
+        """Delete this session's cell log, through the guard that wrote it.
+
+        Only for a scratch session: a log anyone will reopen is the record and
+        is never deleted. Removed by the same proven directory it was written
+        through, not by a path rebuilt somewhere that nothing re-checks.
+        """
+        self._log.unlink(self.log_path.name, missing_ok=True)
+
     def probe_version(self) -> str:
         """Ask the kernel what it is, in a kernel that is then thrown away.
 

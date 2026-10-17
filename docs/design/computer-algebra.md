@@ -255,6 +255,12 @@ reconstructible but the content and its order both required.
 `ExportReport.reproduces` requires it to be `verified` alongside every cell. An
 export reproduces only when both halves hold.
 
+Both halves are the session's own time. The fresh replay and the script run
+are billed to `cas_session_seconds` and bounded by what is left of it, so a
+session cannot buy more time by exporting. Cells the remaining budget does not
+reach are `unverified` ("not reached"), and a script the budget cannot run is
+`unverified` too; neither is assumed to reproduce.
+
 ## The header cannot name its own verdict
 
 The script's header states what was checked before the file existed, names the
