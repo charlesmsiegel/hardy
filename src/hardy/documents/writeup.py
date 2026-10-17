@@ -12,11 +12,14 @@ from __future__ import annotations
 import re
 import tempfile
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
 from hardy.documents.contracts import DocumentStatus
+from hardy.documents.references import dropped_glyphs as dropped_glyphs
+from hardy.documents.references import host_paths as host_paths
 from hardy.formal.contracts import DeclaredAssumption, FrozenClaim
 from hardy.formal.verifier import VerificationResult
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
@@ -24,10 +27,12 @@ from hardy.foundation.values import FrozenModel
 from hardy.workflows.contracts import Grades, RunLimits
 from hardy.workflows.storage import ArtifactIdentity, RunStore
 
-BACKSLASH = chr(92)
+BACKSLASH = "\\"
 
 
 class WriteupContent(FrozenModel):
+    """The prose a model supplies for the paper; every field is escaped into the template."""
+
     title: str
     theorem_text: str
     proof_text: str
@@ -51,6 +56,8 @@ class RunIdentities(FrozenModel):
 
 
 class DocumentResult(FrozenModel):
+    """A writeup as stored: the status it earned and the artifacts it left."""
+
     status: DocumentStatus
     tex_artifact: ArtifactIdentity
     pdf_artifact: ArtifactIdentity | None
@@ -111,29 +118,21 @@ def tectonic_version(
     return found.group("version")
 
 
-MISSING_GLYPH = re.compile(r"^Missing character: (.*)$", re.M)
-# Tectonic's own warning for a file it read from outside the bundle -- a
-# host font, typically -- which is its way of saying the document did not
-# come from the pinned bundle alone.
-HOST_PATH = re.compile(r"accessing absolute path `([^`]*)`; build may not be reproducible")
-
-
-def host_paths(log_text: str) -> tuple[str, ...]:
-    """Every file the engine read from outside the pinned bundle, from its log."""
-    return tuple(dict.fromkeys(HOST_PATH.findall(log_text)))
-
-
-def dropped_glyphs(log_text: str) -> tuple[str, ...]:
-    """Every character the engine reported it could not set, from its log.
-
-    Each line names the character and the font that lacked it. Empty means
-    every character of the source reached the page.
-    """
-    return tuple(dict.fromkeys(match.strip() for match in MISSING_GLYPH.findall(log_text)))
-
-
 def escape_tex_text(value: str) -> str:
+    """`value` as TeX text that typesets exactly those characters."""
     return "".join(TEX_ESCAPES.get(character, character) for character in value)
+
+
+@dataclass(frozen=True)
+class _Paper:
+    """Everything the paper is rendered from, whatever status it is given."""
+
+    claim: FrozenClaim
+    content: WriteupContent
+    grades: Grades
+    verification: VerificationResult | None
+    identities: RunIdentities
+    declared: Sequence[DeclaredAssumption]
 
 
 def build_writeup(
@@ -148,67 +147,50 @@ def build_writeup(
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
     declared: Sequence[DeclaredAssumption] = (),
 ) -> DocumentResult:
-    compiled_source = _render(
-        claim,
-        content,
-        grades,
-        verification,
-        identities,
-        DocumentStatus.TEX_COMPILED,
-        declared=declared,
-    )
+    """Render the run's paper, compile it with the pinned Tectonic, and store it.
+
+    The source, the log, and the PDF only when the compile was clean. A
+    document that failed to compile must not be stored claiming it did, so the
+    source is re-rendered with the status it actually earned.
+    """
+    paper = _Paper(claim, content, grades, verification, identities, declared)
+    compiled_source = _render(paper, DocumentStatus.TEX_COMPILED)
     with tempfile.TemporaryDirectory(prefix="hardy-tex-") as temporary:
-        work = Path(temporary)
-        output = work / "output"
-        output.mkdir()
-        (work / "paper.tex").write_text(compiled_source, encoding="utf-8", newline="\n")
-        spec = ProcessSpec(
-            argv=(
-                str(identities.tectonic_executable),
-                "--bundle",
-                identities.tectonic_bundle,
-                "--keep-logs",
-                "--keep-intermediates",
-                "--outdir",
-                str(output),
-                "paper.tex",
-            ),
-            cwd=work,
-            timeout_seconds=limits.tex_process_seconds,
-            max_output_bytes=limits.process_output_bytes,
+        run = _compile(Path(temporary), compiled_source, identities, limits, runner)
+        succeeded = run.clean()
+        source = compiled_source if succeeded else _render(paper, DocumentStatus.TEX_FAILED)
+        tex_artifact = store.write_text(PurePosixPath("writeup/paper.tex"), source)
+        pdf_artifact = (
+            store.write_bytes(PurePosixPath("writeup/paper.pdf"), run.pdf.read_bytes())
+            if succeeded
+            else None
         )
-        try:
-            process = runner(spec)
-        except OSError as error:
-            # A compiler that cannot be started -- not installed, or the
-            # configured path is wrong -- is a compile that failed, not a
-            # reason to lose the run. Left to propagate, `Popen`'s
-            # `FileNotFoundError` ended the run in a traceback after the proof
-            # work was done, with no manifest and no saved source; the grade
-            # then said the document was never attempted, which is not what
-            # happened. It is recorded the way every other failed compile is:
-            # the source is kept, the log names the cause and the remedy, and
-            # the document says on its front page that it did not compile.
-            process = ProcessResult(
-                argv=spec.argv,
-                cwd=spec.cwd,
-                returncode=None,
-                stdout="",
-                stderr=(
-                    f"{identities.tectonic_executable} could not be run: {error}\n"
-                    "Install Tectonic with `hardy setup`, or point the `tectonic` "
-                    "setting at an existing binary.\n"
-                ),
-                timed_out=False,
-                output_overflow=False,
-                duration_ms=0,
-            )
-        pdf_path = output / "paper.pdf"
-        compiler_log = output / "paper.log"
-        log_text = (
-            compiler_log.read_text(encoding="utf-8", errors="replace") if compiler_log.exists() else ""
+        log_parts = [run.log, run.process.stdout, run.process.stderr]
+        log_artifact = store.write_text(
+            PurePosixPath("writeup/compile.log"),
+            "\n".join(part for part in log_parts if part).rstrip() + "\n",
         )
-        succeeded = (
+    return DocumentResult(
+        status=DocumentStatus.TEX_COMPILED if succeeded else DocumentStatus.TEX_FAILED,
+        tex_artifact=tex_artifact,
+        pdf_artifact=pdf_artifact,
+        log_artifact=log_artifact,
+        process=run.process,
+    )
+
+
+@dataclass(frozen=True)
+class _TectonicRun:
+    """One Tectonic compile of `paper.tex`: the process, the PDF it was to write, and its log."""
+
+    process: ProcessResult
+    pdf: Path
+    log: str
+
+    def clean(self) -> bool:
+        """Whether this compile produced this document, from the pinned bundle alone."""
+        process = self.process
+        return (
             process.returncode == 0
             and not process.timed_out
             and not process.output_overflow
@@ -217,101 +199,94 @@ def build_writeup(
             # leave a readable PDF from an earlier pass in the output
             # directory, and that is not this document compiling.
             and not process.interrupted
-            and pdf_path.exists()
-            and pdf_path.read_bytes().startswith(b"%PDF-")
+            and self.pdf.exists()
+            and self.pdf.read_bytes().startswith(b"%PDF-")
             # A glyph the font lacks is dropped from the page with only a log
             # line to say so, and the exit code stays 0. A PDF whose exact
             # Lean statement has lost its ∀ or its ℚ is not this document
             # compiled; it is a different document, and it is refused.
-            and not dropped_glyphs(log_text)
+            and not dropped_glyphs(self.log)
             # And nothing read from outside the bundle: a font taken from the
             # host is a document the pinned bundle did not produce, whatever
             # the manifest says its digest was.
-            and not host_paths(log_text + "\n" + process.stderr)
+            and not host_paths(self.log + "\n" + process.stderr)
         )
-        final_status = DocumentStatus.TEX_COMPILED if succeeded else DocumentStatus.TEX_FAILED
-        # A document that failed to compile must not be stored claiming it did,
-        # so the source is re-rendered with the status it actually earned.
-        source = (
-            compiled_source
-            if succeeded
-            else _render(
-                claim,
-                content,
-                grades,
-                verification,
-                identities,
-                DocumentStatus.TEX_FAILED,
-                declared=declared,
-            )
-        )
-        tex_artifact = store.write_text(PurePosixPath("writeup/paper.tex"), source)
-        pdf_artifact = (
-            store.write_bytes(PurePosixPath("writeup/paper.pdf"), pdf_path.read_bytes())
-            if succeeded
-            else None
-        )
-        log_parts = [log_text, process.stdout, process.stderr]
-        log_artifact = store.write_text(
-            PurePosixPath("writeup/compile.log"),
-            "\n".join(part for part in log_parts if part).rstrip() + "\n",
-        )
-    return DocumentResult(
-        status=final_status,
-        tex_artifact=tex_artifact,
-        pdf_artifact=pdf_artifact,
-        log_artifact=log_artifact,
-        process=process,
+
+
+def _compile(
+    work: Path, source: str, identities: RunIdentities, limits: RunLimits,
+    runner: Callable[[ProcessSpec], ProcessResult],
+) -> _TectonicRun:
+    """Compile `source` as `paper.tex` in `work` with the run's Tectonic and bundle."""
+    output = work / "output"
+    output.mkdir()
+    (work / "paper.tex").write_text(source, encoding="utf-8", newline="\n")
+    spec = ProcessSpec(
+        argv=(
+            str(identities.tectonic_executable),
+            "--bundle",
+            identities.tectonic_bundle,
+            "--keep-logs",
+            "--keep-intermediates",
+            "--outdir",
+            str(output),
+            "paper.tex",
+        ),
+        cwd=work,
+        timeout_seconds=limits.tex_process_seconds,
+        max_output_bytes=limits.process_output_bytes,
+    )
+    try:
+        process = runner(spec)
+    except OSError as error:
+        process = _not_started(spec, identities.tectonic_executable, error)
+    compiler_log = output / "paper.log"
+    log = compiler_log.read_text(encoding="utf-8", errors="replace") if compiler_log.exists() else ""
+    return _TectonicRun(process, output / "paper.pdf", log)
+
+
+def _not_started(spec: ProcessSpec, executable: Path, error: OSError) -> ProcessResult:
+    """A compile that could not start, recorded as a compile that failed.
+
+    A compiler that cannot be started -- not installed, or the configured path
+    is wrong -- is a compile that failed, not a reason to lose the run. Left to
+    propagate, `Popen`'s `FileNotFoundError` ended the run in a traceback after
+    the proof work was done, with no manifest and no saved source; the grade
+    then said the document was never attempted, which is not what happened. It
+    is recorded the way every other failed compile is: the source is kept, the
+    log names the cause and the remedy, and the document says on its front
+    page that it did not compile.
+    """
+    return ProcessResult(
+        argv=spec.argv,
+        cwd=spec.cwd,
+        returncode=None,
+        stdout="",
+        stderr=(
+            f"{executable} could not be run: {error}\n"
+            "Install Tectonic with `hardy setup`, or point the `tectonic` "
+            "setting at an existing binary.\n"
+        ),
+        timed_out=False,
+        output_overflow=False,
+        duration_ms=0,
     )
 
 
-def _render(
-    claim: FrozenClaim,
-    content: WriteupContent,
-    grades: Grades,
-    verification: VerificationResult | None,
-    identities: RunIdentities,
-    document_status: DocumentStatus,
-    declared: Sequence[DeclaredAssumption] = (),
-) -> str:
+def _render(paper: _Paper, document_status: DocumentStatus) -> str:
     template = files("hardy.documents").joinpath("templates/paper.tex").read_text(encoding="utf-8")
-    binders = f" {claim.proposal.binders.strip()}" if claim.proposal.binders.strip() else ""
-    signature = (
-        f"theorem {claim.proposal.theorem_name}{binders} : "
-        f"{claim.proposal.proposition.strip()}"
-    )
+    content, grades = paper.content, paper.grades
+    proposal = paper.claim.proposal
     interpretation_items = (
-        *claim.proposal.domains,
-        *claim.proposal.quantifiers,
-        *claim.proposal.assumptions,
-        *claim.proposal.interpretation_choices,
+        *proposal.domains,
+        *proposal.quantifiers,
+        *proposal.assumptions,
+        *proposal.interpretation_choices,
     )
     gaps = content.known_gaps or grades.known_gaps
+    verification = paper.verification
     axioms = (
         ", ".join(verification.axioms) or "None" if verification is not None else "Not available"
-    )
-    lean_source_hash = verification.source_sha256 if verification is not None else "Not available"
-    verification_hash = (
-        verification.verification_sha256
-        if verification is not None and verification.verification_sha256 is not None
-        else "Not available"
-    )
-    hashes = [
-        f"Frozen Claim SHA-256: {claim.content_hash}",
-        f"Lean source SHA-256: {lean_source_hash}",
-        f"Verification SHA-256: {verification_hash}",
-        f"Prompt set SHA-256: {identities.prompt_set_sha256}",
-        f"Tectonic bundle SHA-256: {identities.tectonic_bundle_sha256}",
-    ]
-    identity_lines = (
-        f"Run ID: {identities.run_id}",
-        f"Model: {identities.model}",
-        f"Backend: {identities.backend}",
-        f"Runtime SDK: {identities.runtime_sdk_version}",
-        f"Lean: {identities.lean_version}",
-        f"Mathlib: {identities.mathlib_revision}",
-        f"Tectonic: {identities.tectonic_version}",
-        f"Tectonic bundle: {identities.tectonic_bundle}",
     )
     replacements = {
         "@@TITLE@@": escape_tex_text(content.title),
@@ -323,7 +298,7 @@ def _render(
         "@@INTERPRETATION@@": _items(interpretation_items, "No additional assumptions."),
         "@@PROOF_TEXT@@": escape_tex_text(content.proof_text),
         "@@KNOWN_GAPS@@": _items(gaps, "None recorded."),
-        "@@LEAN_SIGNATURE@@": _verbatim(signature),
+        "@@LEAN_SIGNATURE@@": _verbatim(_signature(paper.claim)),
         "@@AXIOMS@@": escape_tex_text(axioms),
         # Named one by one, never counted. A reader deciding whether to
         # believe an assumed result has to be able to go and check each
@@ -331,13 +306,51 @@ def _render(
         # tells them nothing they can act on. The sentence is written even
         # when there are none, because silence here reads the same as an
         # assumption nobody rendered.
-        "@@ASSUMPTIONS@@": _assumptions(grades.assumed, declared),
-        "@@HASHES@@": _verbatim("\n".join(hashes)),
+        "@@ASSUMPTIONS@@": _assumptions(grades.assumed, paper.declared),
+        "@@HASHES@@": _verbatim("\n".join(_hashes(paper))),
         "@@IDENTITIES@@": "\n".join(
-            BACKSLASH + "item{} " + escape_tex_text(line) for line in identity_lines
+            BACKSLASH + "item{} " + escape_tex_text(line) for line in _identity_lines(paper.identities)
         ),
     }
     return re.sub(r"@@[A-Z_]+@@", lambda match: replacements[match.group()], template)
+
+
+def _signature(claim: FrozenClaim) -> str:
+    binders = f" {claim.proposal.binders.strip()}" if claim.proposal.binders.strip() else ""
+    return (
+        f"theorem {claim.proposal.theorem_name}{binders} : "
+        f"{claim.proposal.proposition.strip()}"
+    )
+
+
+def _hashes(paper: _Paper) -> list[str]:
+    verification = paper.verification
+    lean_source_hash = verification.source_sha256 if verification is not None else "Not available"
+    verification_hash = (
+        verification.verification_sha256
+        if verification is not None and verification.verification_sha256 is not None
+        else "Not available"
+    )
+    return [
+        f"Frozen Claim SHA-256: {paper.claim.content_hash}",
+        f"Lean source SHA-256: {lean_source_hash}",
+        f"Verification SHA-256: {verification_hash}",
+        f"Prompt set SHA-256: {paper.identities.prompt_set_sha256}",
+        f"Tectonic bundle SHA-256: {paper.identities.tectonic_bundle_sha256}",
+    ]
+
+
+def _identity_lines(identities: RunIdentities) -> tuple[str, ...]:
+    return (
+        f"Run ID: {identities.run_id}",
+        f"Model: {identities.model}",
+        f"Backend: {identities.backend}",
+        f"Runtime SDK: {identities.runtime_sdk_version}",
+        f"Lean: {identities.lean_version}",
+        f"Mathlib: {identities.mathlib_revision}",
+        f"Tectonic: {identities.tectonic_version}",
+        f"Tectonic bundle: {identities.tectonic_bundle}",
+    )
 
 
 def _assumptions(
@@ -366,9 +379,11 @@ def _assumptions(
             )
             continue
         rendered = escape_tex_text(f"{name} : {item.statement.strip()}")
-        provenance = escape_tex_text(f"Assumed from {item.source.strip()}.")
-        if item.justification.strip():
-            provenance += " " + escape_tex_text(item.justification.strip())
+        provenance = " ".join(
+            escape_tex_text(part)
+            for part in (f"Assumed from {item.source.strip()}.", item.justification.strip())
+            if part
+        )
         # One line break, not two: the provenance sits under the statement it
         # describes. Two in a row is two breaks, and LaTeX refuses the
         # second with "there's no line here to end" -- which is no PDF at all.

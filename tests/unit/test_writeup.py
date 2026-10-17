@@ -462,15 +462,15 @@ def test_model_markers_are_literal_and_never_rescanned(tmp_path):
     from hardy.documents import writeup
     from hardy.workflows import contracts as domain
 
-    tex = writeup._render(
+    paper = writeup._Paper(
         _claim(domain),
         writeup.WriteupContent(
             title='X @@LEAN_SIGNATURE@@ Y', theorem_text='@@ASSUMPTIONS@@',
             proof_text='@@HASHES@@', known_gaps=('[0, 1) @@IDENTITIES@@',),
         ),
-        domain.Grades(), None, _identities(writeup, tmp_path),
-        domain.DocumentStatus.NOT_ATTEMPTED,
+        domain.Grades(), None, _identities(writeup, tmp_path), (),
     )
+    tex = writeup._render(paper, domain.DocumentStatus.NOT_ATTEMPTED)
     assert writeup.escape_tex_text('X @@LEAN_SIGNATURE@@ Y') in tex
     assert '\n@@HASHES@@\n' in tex
     assert '\n@@ASSUMPTIONS@@\n' in tex
