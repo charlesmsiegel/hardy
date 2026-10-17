@@ -309,7 +309,7 @@ class FinalVerifier:
         # forbidden in `audit.classify` before approval is consulted at all,
         # so no declaration can launder a hole.
         verdict = audit.classify(reports, [item.name for item in permitted])
-        if verdict.status not in ("clean", "modulo"):
+        if verdict.status not in (audit.AuditStatus.CLEAN, audit.AuditStatus.MODULO):
             return _failure(
                 store,
                 source,

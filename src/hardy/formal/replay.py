@@ -94,7 +94,7 @@ def replay_payload(*, module: str, declaration: str, sources: Mapping[str, str],
     if not declaration or any(value in declaration for value in ("\n", "\r", " ", ";")):
         raise ValueError("Replay declaration must be one exact Lean name")
     verdict = audit.classify((audit.AxiomReport(declaration, tuple(axioms)),), approved)
-    if verdict.status not in {"clean", "modulo"}:
+    if verdict.status not in (audit.AuditStatus.CLEAN, audit.AuditStatus.MODULO):
         raise ValueError("Selected artifact has forbidden or unapproved axioms")
     order = build_order(sources, (module,))
     external = {name for selected in order for name in parse_imports(sources[selected])} - set(sources)
