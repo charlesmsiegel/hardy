@@ -1058,8 +1058,22 @@ class PremiseRetriever:
         )
 
 
+class PinnedProject(Protocol):
+    """What the default sources need of a Lean service: the pinned corpus and where it lives.
+
+    `LeanService` is the implementation. `lean_project` may be None for a
+    caller with no Lake project, and the declaration index then reads nothing.
+    """
+
+    @property
+    def environment(self) -> EnvironmentIdentity: ...
+
+    @property
+    def lean_project(self) -> Path | None: ...
+
+
 def build_retriever(
-    service: object, limits: RunLimits, index: DeclarationIndex | None = None
+    service: PinnedProject, limits: RunLimits, index: DeclarationIndex | None = None
 ) -> PremiseRetriever:
     """The default source set, in the order the budget should spend on them.
 
@@ -1077,7 +1091,7 @@ def build_retriever(
     per ranking -- the finding is recorded in `declarations.py`.
     """
     if index is None:
-        index = DeclarationIndex(getattr(service, "lean_project", None))
+        index = DeclarationIndex(service.lean_project)
     return PremiseRetriever(
         sources=(
             DeclarationIndexSource(index, environment=service.environment),
