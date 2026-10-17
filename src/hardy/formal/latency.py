@@ -594,8 +594,46 @@ def describe(
     Without an observed run to compare against there is no verdict to give,
     and the report says which number is missing rather than supplying a call
     count of its own. Inventing one here would defeat the measurement.
+
+    Read top to bottom it is what was measured, whether the prelude is
+    identifiable, and only then the verdict; each section that can withhold
+    the verdict ends the report there, saying why.
     """
-    imports = ", ".join(cost.imports) or "(none)"
+    lines = [*_identity_lines(cost), *_probe_lines(cost)]
+    median = cost.median_ms
+    if median is None:
+        return [*lines, *_unidentified_lines(cost)]
+    lines.extend(_prelude_lines(cost, median))
+    if calls is None or total_ms is None:
+        lines.append("")
+        lines.append(
+            "for a verdict, re-run with --calls and --total-seconds from an observed run: "
+            "a warm pool recovers every call's prelude except the one each worker "
+            "pays on its first."
+        )
+        return lines
+    lines.append("")
+    lines.append(f"observed run: {calls} Lean call(s) in {total_ms / 1000:.2f}s")
+    if not cost.enough_samples:
+        # Withheld, not footnoted. Multiplying a prelude the report has just
+        # called possibly-overstated across every call, and then declaring a
+        # pool warranted on the product, is the report contradicting itself --
+        # the same fault as printing a share that disagrees with its verdict.
+        lines.append(
+            f"no verdict: the prelude above rests on {len(cost.samples_ms)} probe(s) and may "
+            f"still carry the one-time cold-cache cost, which this would multiply across "
+            f"{calls} calls; re-measure with --repeats {MINIMUM_SAMPLES} or more"
+        )
+        return lines
+    estimate = cost.estimate(calls=calls, total_ms=total_ms, workers=workers)
+    lines.extend(_assumption_lines(calls, ", ".join(cost.imports) or "(none)"))
+    if not estimate.is_consistent:
+        return [*lines, *_inconsistent_lines(estimate, median)]
+    return [*lines, *_verdict_lines(estimate, threshold)]
+
+
+def _identity_lines(cost: ImportCost) -> list[str]:
+    """What the durations belong to: command, project, toolchain, machine, imports."""
     lines = [
         # The toolchain first: these durations belong to it, and a report
         # pasted elsewhere without it cannot be reproduced or attributed.
@@ -631,7 +669,12 @@ def describe(
             "edited local modules or rebuilt packages are not detected)"
         )
     lines.append(f"machine: {cost.machine or '(unrecorded)'}")
-    lines.append(f"import set: {imports}")
+    lines.append(f"import set: {', '.join(cost.imports) or '(none)'}")
+    return lines
+
+
+def _probe_lines(cost: ImportCost) -> list[str]:
+    """How the probes went, and the first thing Lean complained about."""
     # `repr`, not `:.0f` and not `:g`. The deadline is a censored sample's
     # entire lower bound, so a rounded one misreports both the configuration
     # and the bound it implies: `:.0f` rendered `--timeout 0.4` as "0s", and
@@ -642,47 +685,54 @@ def describe(
     deadline = (
         "" if cost.timeout_seconds is None else f" (deadline {cost.timeout_seconds!r}s)"
     )
-    lines.append(
+    lines = [
         f"probes: {len(cost.samples_ms)} ok, {cost.timeouts} timed out, "
         f"{cost.errors} failed{deadline}"
-    )
+    ]
     if cost.diagnostic:
         lines.append(f"first error: {cost.diagnostic}")
-    median = cost.median_ms
-    if median is None:
-        # Both can be true at once -- probes that errored and probes that were
-        # killed are different failures with different fixes -- so whichever
-        # apply are stated. Reporting only the first would hide the other.
-        explained = False
-        if cost.errors > len(cost.samples_ms):
-            explained = True
-            lines.append(
-                f"{cost.errors} of {cost.probes} probes failed outright, so the "
-                f"{len(cost.samples_ms)} that finished are not evidence of a steady state; "
-                "fix the error above and re-measure"
-            )
-        if cost.timeouts:
-            explained = True
-            lines.append(
-                # Every probe in the denominator. Counting only those that
-                # carry a duration reported "1 of 1 probes hit the deadline"
-                # directly beneath a line saying three probes ran, which reads
-                # as a timeout being the only failure mode.
-                f"{cost.timeouts} of {cost.probes} probes hit the deadline, so the prelude is "
-                "longer than the probes that finished and the median is not identifiable; "
-                "re-run with a longer --timeout"
-            )
-        if not explained:
-            lines.append("no successful probe; the prelude is unmeasured and #54 cannot be decided")
-        return lines
+    return lines
+
+
+def _unidentified_lines(cost: ImportCost) -> list[str]:
+    """Why no prelude can be read off these probes.
+
+    Both can be true at once -- probes that errored and probes that were
+    killed are different failures with different fixes -- so whichever apply
+    are stated. Reporting only the first would hide the other.
+    """
+    lines = []
+    if cost.errors > len(cost.samples_ms):
+        lines.append(
+            f"{cost.errors} of {cost.probes} probes failed outright, so the "
+            f"{len(cost.samples_ms)} that finished are not evidence of a steady state; "
+            "fix the error above and re-measure"
+        )
+    if cost.timeouts:
+        lines.append(
+            # Every probe in the denominator. Counting only those that
+            # carry a duration reported "1 of 1 probes hit the deadline"
+            # directly beneath a line saying three probes ran, which reads
+            # as a timeout being the only failure mode.
+            f"{cost.timeouts} of {cost.probes} probes hit the deadline, so the prelude is "
+            "longer than the probes that finished and the median is not identifiable; "
+            "re-run with a longer --timeout"
+        )
+    return lines or ["no successful probe; the prelude is unmeasured and #54 cannot be decided"]
+
+
+def _prelude_lines(cost: ImportCost, median: int) -> list[str]:
+    """The measured prelude, its samples, and whether there are enough of them."""
     # Labelled by what the median was actually taken over. With samples of 10s
     # and 12s plus one timeout the answer is 12s -- the censored middle of
     # three -- and calling it a "median of 2" invites the reader to check it
     # against those two samples, whose own median is 11s.
     counted = len(cost.samples_ms) + cost.timeouts
     label = "censored median" if cost.timeouts else "median"
-    lines.append(f"prelude ({label} of {counted}): {median / 1000:.2f}s per Lean call")
-    lines.append(f"samples: {', '.join(f'{item / 1000:.2f}s' for item in cost.samples_ms)}")
+    lines = [
+        f"prelude ({label} of {counted}): {median / 1000:.2f}s per Lean call",
+        f"samples: {', '.join(f'{item / 1000:.2f}s' for item in cost.samples_ms)}",
+    ]
     if not cost.enough_samples:
         # The first elaboration on a machine also warms the page cache, and the
         # median can only step over that outlier once there are others to step
@@ -693,77 +743,64 @@ def describe(
             "exclude the cold-cache first elaboration, so the prelude above may be overstated; "
             f"--repeats {MINIMUM_SAMPLES} or more measures the steady state"
         )
-    if calls is None or total_ms is None:
-        lines.append("")
-        lines.append(
-            "for a verdict, re-run with --calls and --total-seconds from an observed run: "
-            "a warm pool recovers every call's prelude except the one each worker "
-            "pays on its first."
-        )
-        return lines
-    lines.append("")
-    lines.append(f"observed run: {calls} Lean call(s) in {total_ms / 1000:.2f}s")
-    if not cost.enough_samples:
-        # Withheld, not footnoted. Multiplying a prelude the report has just
-        # called possibly-overstated across every call, and then declaring a
-        # pool warranted on the product, is the report contradicting itself --
-        # the same fault as printing a share that disagrees with its verdict.
-        lines.append(
-            f"no verdict: the prelude above rests on {len(cost.samples_ms)} probe(s) and may "
-            f"still carry the one-time cold-cache cost, which this would multiply across "
-            f"{calls} calls; re-measure with --repeats {MINIMUM_SAMPLES} or more"
-        )
-        return lines
-    estimate = cost.estimate(calls=calls, total_ms=total_ms, workers=workers)
-    # The one assumption the tool cannot check. `--calls` is taken to count
-    # only calls that imported the probed set; a run whose calls import
-    # different modules has a different prelude per call, and nothing here can
-    # tell the difference unless the arithmetic overruns the wall clock (which
-    # `is_consistent` does catch). Stated in the report rather than left to the
-    # reader, because this number is meant to be quoted as evidence.
-    lines.append(
+    return lines
+
+
+def _assumption_lines(calls: int, imports: str) -> list[str]:
+    """The two things a verdict rests on that nothing here can check."""
+    return [
+        # `--calls` is taken to count only calls that imported the probed set;
+        # a run whose calls import different modules has a different prelude
+        # per call, and nothing here can tell the difference unless the
+        # arithmetic overruns the wall clock (which `is_consistent` does
+        # catch). Stated in the report rather than left to the reader, because
+        # this number is meant to be quoted as evidence.
         f"assuming all {calls} imported `{imports}` — a call importing something else "
-        "pays a different prelude, and counting it here overstates the recovery"
-    )
-    # The second thing nothing here can check. Every identity above describes
-    # the *probe*; `--calls` and `--total-seconds` arrive as bare numbers with
-    # no provenance at all. A wall time copied from a faster machine, an older
-    # Mathlib, or a different project state combines with a locally measured
-    # prelude to produce a verdict neither environment supports -- and it looks
-    # exactly like a verdict that both do.
-    lines.append(
+        "pays a different prelude, and counting it here overstates the recovery",
+        # Every identity above describes the *probe*; `--calls` and
+        # `--total-seconds` arrive as bare numbers with no provenance at all. A
+        # wall time copied from a faster machine, an older Mathlib, or a
+        # different project state combines with a locally measured prelude to
+        # produce a verdict neither environment supports -- and it looks
+        # exactly like a verdict that both do.
         "and assuming that run happened on the machine and toolchain recorded above — "
         "these are two separate measurements, and nothing here can tell whether they "
-        "came from the same one"
-    )
-    if not estimate.is_consistent:
-        fastest = estimate.floor_ms if estimate.floor_ms is not None else estimate.import_ms
-        # The *adjusted* per-call bound, which is what the total below is
-        # computed from. Printing the raw fastest sample beside a total derived
-        # from `fastest - spread` said "each call paid at least 11s, so 100 of
-        # them are 900s" -- two numbers that cannot both be right.
-        floor = max(0, fastest - estimate.spread_ms)
-        if estimate.floor_prelude_ms > total_ms:
-            # The observed total, not the saving. Printing `recoverable_ms`
-            # here said "2 calls each paying 60.00s is 60.00s, longer than the
-            # 100.00s run", which is neither true nor even self-consistent.
-            lines.append(
-                f"{calls} calls each paying at least {floor / 1000:.2f}s is "
-                f"{estimate.floor_prelude_ms / 1000:.2f}s, longer than the "
-                f"{total_ms / 1000:.2f}s run itself, so these calls did not all pay this "
-                "prelude -- most likely the probe and the run do not import the same modules."
-            )
-        else:
-            lines.append(
-                f"the {median / 1000:.2f}s median prelude implies a "
-                f"{estimate.recoverable_ms / 1000:.2f}s saving inside a "
-                f"{total_ms / 1000:.2f}s run, which is more time than the run took; the probes "
-                f"disagree too widely (fastest {fastest / 1000:.2f}s) to estimate from."
-            )
-        lines.append(
-            "No verdict follows; re-measure with the run's own import set, or with more probes."
+        "came from the same one",
+    ]
+
+
+def _inconsistent_lines(estimate: WarmPoolEstimate, median: int) -> list[str]:
+    """Why a prelude that overruns the observed run yields no verdict."""
+    calls, total_ms = estimate.calls, estimate.total_ms
+    fastest = estimate.floor_ms if estimate.floor_ms is not None else estimate.import_ms
+    # The *adjusted* per-call bound, which is what the total below is computed
+    # from. Printing the raw fastest sample beside a total derived from
+    # `fastest - spread` said "each call paid at least 11s, so 100 of them are
+    # 900s" -- two numbers that cannot both be right.
+    floor = max(0, fastest - estimate.spread_ms)
+    if estimate.floor_prelude_ms > total_ms:
+        # The observed total, not the saving. Printing `recoverable_ms` here
+        # said "2 calls each paying 60.00s is 60.00s, longer than the 100.00s
+        # run", which is neither true nor even self-consistent.
+        why = (
+            f"{calls} calls each paying at least {floor / 1000:.2f}s is "
+            f"{estimate.floor_prelude_ms / 1000:.2f}s, longer than the "
+            f"{total_ms / 1000:.2f}s run itself, so these calls did not all pay this "
+            "prelude -- most likely the probe and the run do not import the same modules."
         )
-        return lines
+    else:
+        why = (
+            f"the {median / 1000:.2f}s median prelude implies a "
+            f"{estimate.recoverable_ms / 1000:.2f}s saving inside a "
+            f"{total_ms / 1000:.2f}s run, which is more time than the run took; the probes "
+            f"disagree too widely (fastest {fastest / 1000:.2f}s) to estimate from."
+        )
+    return [why, "No verdict follows; re-measure with the run's own import set, or with more probes."]
+
+
+def _verdict_lines(estimate: WarmPoolEstimate, threshold: float) -> list[str]:
+    """What a pool would recover, and whether that clears the threshold."""
+    workers = estimate.workers
     # Both percentages share one precision, chosen so the printed share never
     # reads as meeting a threshold the verdict below says it missed.
     places = _decimal_places(estimate.recoverable_fraction, threshold)
@@ -772,11 +809,11 @@ def describe(
     # `busy`, not `workers`: a pool larger than the run leaves the surplus idle,
     # and they never pay a first import to be credited with.
     idle = "" if busy == workers else f" ({workers - busy} of {workers} would never receive a call)"
-    lines.append(
+    lines = [
         f"{pool} would recover {estimate.recoverable_ms / 1000:.2f}s "
         f"({estimate.recoverable_fraction:.{places}%} of the run), sequentially — "
-        f"{calls} calls minus {busy} first import(s){idle}"
-    )
+        f"{estimate.calls} calls minus {busy} first import(s){idle}"
+    ]
     warranted = estimate.warrants_warm_pool(threshold=threshold)
     verdict = "warranted" if warranted else "not warranted"
     # The relation comes from the exact values, not from the digits printed
