@@ -25,11 +25,11 @@ from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
+from hardy.documents.conditionals import read_conditionals as read_conditionals
+from hardy.documents.inclusion import INCLUSION as INCLUSION
 from hardy.documents.reader import Displayed, assemble, without_definitions
 from hardy.documents.reader import displayed as displayed
 from hardy.documents.reader import target as target
-from hardy.documents.syntax import INCLUSION as INCLUSION
-from hardy.documents.syntax import read_conditionals as read_conditionals
 from hardy.formal.syntax import COMMAND, normalise_lean, strip_comments
 
 # TeX escapes, undone, so prose written for a compiler can be compared with the

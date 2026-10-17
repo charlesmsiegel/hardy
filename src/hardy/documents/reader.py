@@ -18,6 +18,8 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from hardy.documents.conditionals import read_conditionals
+from hardy.documents.inclusion import INCLUSION, ROOT_DOCUMENT, normalise_include
 from hardy.documents.scanner import (
     INLINE_VERBATIM,
     Conditionals,
@@ -30,7 +32,6 @@ from hardy.documents.scanner import (
     tex_lines,
     uncommented,
 )
-from hardy.documents.syntax import INCLUSION, ROOT_DOCUMENT, normalise_include, read_conditionals
 
 # A branch TeX compiles without typesetting. Bounded to the literal spelling:
 # this is a scanner, not a TeX engine, and the general conditional is a limit

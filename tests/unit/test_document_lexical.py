@@ -1,4 +1,4 @@
-from hardy.documents import completion, reader, scanner, syntax
+from hardy.documents import completion, conditionals, inclusion, reader, scanner, syntax
 
 
 def test_stamp_ignores_inactive_document_markers():
@@ -228,3 +228,21 @@ def test_an_input_argument_is_resolved_as_tex_reads_it():
     assert reader.target('./sub\\a', tex) == 'sub/a.tex'
     assert reader.target('b', tex) == 'b'
     assert reader.target('  ', tex) == ''
+
+
+def test_a_newif_declared_before_use_is_sure_and_a_let_binding_is_not():
+    found = conditionals.read_conditionals(
+        {'writeup.tex': r'\newif\ifdraft \ifdraft x\fi \let\ifother\iftrue'}
+    )
+    assert found.declared == {'ifdraft'}
+    assert found.ambiguous == {'ifother'}
+    assert not found.opaque
+
+
+def test_may_reach_over_approximates_rather_than_follow_only_input_braces():
+    """A file named anywhere may be read; a name built from a macro may be any file."""
+    named = {'writeup.tex': r'\input defs', 'defs.tex': '', 'orphan.tex': ''}
+    assert inclusion.may_reach(named, 'writeup.tex') == {'writeup.tex', 'defs.tex'}
+    built = {'writeup.tex': r'\def\d{defs}\input{\d}', 'defs.tex': '', 'orphan.tex': ''}
+    assert inclusion.may_reach(built, 'writeup.tex') == set(built)
+    assert inclusion.resolver(['sub/a.tex'])('./sub/a') == 'sub/a.tex'
