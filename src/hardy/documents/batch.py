@@ -20,6 +20,8 @@ def describe_toolchain(toolchain: dict[str, Any] | None) -> str:
 #: The heading a kept sketch is written under. Exported because the audit has
 #: to look for exactly what the writer wrote.
 SKETCH_HEADING = "## Sketch (not a proof)"
+#: The fewest backticks a Markdown code fence may have.
+SHORTEST_FENCE = 3
 
 
 def longest_run(text: str, character: str) -> int:
@@ -89,7 +91,7 @@ def sketch_section(sketch: dict[str, Any]) -> str:
     # generated section still agreed byte for byte, so the audit saw nothing
     # wrong; what was wrong was the rendering, and the fence is where that is
     # fixed.
-    fence = "`" * max(3, longest_run(sketch["proof"], "`") + 1)
+    fence = "`" * max(SHORTEST_FENCE, longest_run(sketch["proof"], "`") + 1)
     return f"\n{SKETCH_HEADING}\n\n{body}\n\n{fence}lean\n{sketch['proof']}\n{fence}\n"
 
 
