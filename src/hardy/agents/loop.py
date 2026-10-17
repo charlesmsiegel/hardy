@@ -108,6 +108,8 @@ class Message:
     blocks: tuple[Any, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
+        """The message as a transcript holds it: what was said and called,
+        never the opaque `reasoning` or `blocks`."""
         value: dict[str, Any] = {"role": self.role, "text": self.text}
         if self.tool_calls:
             value["tool_calls"] = [
@@ -191,7 +193,7 @@ def block_order(blocks: Sequence[Any]) -> tuple[str, ...]:
     return tuple(order)
 
 
-def reasoning_digest(block: Any) -> str:
+def reasoning_digest(block: object) -> str:
     """The digest contribution of one opaque reasoning block.
 
     Hashed rather than transcribed, so nothing here writes down what Hardy has
@@ -276,6 +278,68 @@ class Budget:
         return self.max_turns is not None and self.spent >= self.max_turns
 
 
+class _RunningUsage:
+    """The provider's counters, session-to-date, and which of them this
+    exchange stated: what an exchange's `result` report publishes.
+
+    Session-to-date, like the SDK's own report, because `usage.Usage`
+    differences each figure against the last one stated for it. A
+    per-exchange report climbing past its predecessor would be counted as the
+    difference and undercount every exchange after the first.
+    """
+
+    def __init__(self) -> None:
+        self._totals: dict[str, int] = {}
+        self._cost = 0.0
+        #: Which counters, and whether a cost, *this* exchange stated. A report
+        #: publishes the running total for these and no others: `usage.Usage`
+        #: reads a field it is handed as reported, and a stale figure repeated
+        #: from an earlier exchange would advance that field's coverage count
+        #: for an exchange that never mentioned it -- a spend meter claiming to
+        #: cover turns it did not measure.
+        self._stated: set[str] = set()
+        self._cost_stated = False
+
+    def restart(self) -> None:
+        """Start a new exchange: nothing stated yet, totals carried on."""
+        self._stated, self._cost_stated = set(), False
+
+    def fold(self, usage: Mapping[str, Any] | None) -> None:
+        """Accumulate one provider call's counters and USD receipt."""
+        if not isinstance(usage, Mapping):
+            return
+        for key, value in usage.items():
+            if key == "cost_usd":
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+                    self._cost += float(value)
+                    self._cost_stated = True
+                continue
+            if isinstance(value, int) and not isinstance(value, bool):
+                self._totals[str(key)] = self._totals.get(str(key), 0) + value
+                self._stated.add(str(key))
+
+    @property
+    def cost_usd(self) -> float | None:
+        """The running USD total, or None when this exchange stated no cost.
+
+        Only explicit provider USD receipts supply price; token tariffs belong
+        to the separate spend-admission estimate.
+        """
+        return self._cost if self._cost_stated else None
+
+    @property
+    def usage(self) -> dict[str, int] | None:
+        """The running total for the counters this exchange stated, or None.
+
+        An exchange that reported nothing -- one that ended on a provider error
+        before any answer arrived -- reports None rather than handing back the
+        previous exchange's figures as though it had stated them itself; and
+        one that stated some but not all of them does not silently vouch for
+        the rest.
+        """
+        return {key: self._totals[key] for key in sorted(self._stated)} or None
+
+
 class AgentLoop:
     """One exchange, driven by Hardy.
 
@@ -313,23 +377,14 @@ class AgentLoop:
         #: and a process that ends takes it with it.
         self.messages: list[Message] = []
         self.turns: int | None = None
-        #: Session-to-date, like the SDK's own report, because `usage.Usage`
-        #: differences each figure against the last one stated for it. A
-        #: per-exchange report climbing past its predecessor would be counted
-        #: as the difference and undercount every exchange after the first.
-        self._totals: dict[str, int] = {}
-        self._total_cost_usd = 0.0
-        self._cost_stated = False
-        #: Which counters *this* exchange stated. A report publishes the
-        #: running total for these and no others: `usage.Usage` reads a field
-        #: it is handed as reported, and a stale figure repeated from an
-        #: earlier exchange would advance that field's coverage count for an
-        #: exchange that never mentioned it -- a spend meter claiming to cover
-        #: turns it did not measure.
-        self._stated: set[str] = set()
+        #: What the provider reported spending, for the `result` report.
+        self._usage = _RunningUsage()
         #: What ended this exchange badly, if anything. Read by `_report`,
         #: which runs from a `finally` and cannot otherwise tell.
         self._failure: str | None = None
+        #: Whether spend admission refused a call this exchange; with no call
+        #: sent, its report says the provider was never asked.
+        self._budget_refused: bool = False
         self._cancelled = False
         #: Indices of tool results still holding their placeholder answer. The
         #: teardown reads them, so an exchange nobody drained still says which
@@ -382,8 +437,8 @@ class AgentLoop:
         """
         self._cancelled = False
         self._pending = []
-        self._stated, self._failure = set(), None
-        self._cost_stated = False
+        self._usage.restart()
+        self._failure = None
         self._budget_refused = False
         self.turns = None
         budget = Budget(self.max_turns, self.wall_seconds)
@@ -417,40 +472,9 @@ class AgentLoop:
             if self._cancelled:
                 return
             self._deadline(budget)
-            # Asked before the bound, because a run with nothing left to do has
-            # not reached one. A submission accepted on the `max_turns`-th call
-            # left the next iteration raising here first: the trajectory
-            # recorded a `turn_limit` and a `max_turns` limit event, the runner
-            # then overwrote the terminal reason to `verified`, and the record
-            # said a bound had ended a run that already had its result -- with
-            # the decline that actually ended it missing. The bound still binds
-            # a run that has work left, because the hook returns None there.
-            declined = self._hook(lambda: self._before_turn(self.messages)) if self._before_turn is not None else None
-            if declined is None and budget.exhausted():
-                self._observe({"type": "turn_limit", "turns": budget.spent, "max_turns": self.max_turns})
-                raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
-            if declined is not None:
-                # Hardy declining to spend a turn is a fact about the run, not
-                # an absence of one, so it is recorded and said out loud.
-                # Always `exchange`: this hook is asked from inside `_turns`,
-                # so a decline here is never the pre-model one a closer ladder
-                # makes. The two are told apart by the stage rather than by
-                # their prose, which a record could rewrite.
-                self._observe({"type": "declined_turn", "stage": "exchange", "why": declined})
-                spoken.append(declined)
-                # In the `user` role, not the assistant's. Hardy is the party
-                # on this side of the wire -- the steering block travels the
-                # same way -- and a decline recorded as something the model
-                # said would put words in its mouth in every later exchange
-                # that reads this conversation back.
-                self.messages.append(Message("user", text=declined))
+            if self._declined(budget, spoken):
                 return
-            if self._compact is not None:
-                compacted = self._hook(lambda: self._compact(self.messages))
-                if compacted is not None:
-                    self.messages = compacted
-                    self._pending = [(message, arguments) for message, arguments in self._pending
-                                     if any(current is message for current in self.messages)]
+            self._compact_messages()
             # Again, because the two hooks above are where a caller spends real
             # time -- `before_turn` is where a cheap-closer ladder runs, and
             # running Lean is exactly the thing that eats a budget. Left to the
@@ -468,116 +492,10 @@ class AgentLoop:
             # is then discarded, having been billed for.
             if self._cancelled:
                 return
-            # Counted before the call, not after. A request that raised was
-            # still a provider call: it may have been billed for, it consumed
-            # a turn of the bound, and a trajectory that showed zero turns
-            # beside a provider error would be describing a run that never
-            # happened.
-            budget.spent += 1
-            try:
-                turn = self._provider.complete(
-                    system=self._system_prompt,
-                    messages=list(self.messages),
-                    specs=self._specs,
-                    timeout=budget.remaining_seconds(),
-                )
-            except SpendLimitReached as error:
-                if not error.provider_called:
-                    budget.spent -= 1  # Admission refused before any actual provider call.
-                self._failure = f"SpendLimitReached: {error.limit}"
-                self._budget_refused = True
-                self._observe({"type": "budget_limit", "limit": error.limit})
-                raise
-            except ProviderRequestTimeout as error:
-                if not error.provider_called:
-                    budget.spent -= 1
-                    # Admission expired before this exchange sent any request.
-                    self._budget_refused = True
-                self._failure = f"{type(error).__name__}: {error}"
-                raise
-            except BaseException as error:  # noqa: BLE001 - re-raised, recorded on the way past
-                # Recorded here because `_report` runs from a `finally` and
-                # would otherwise emit `is_error: false` for an exchange that
-                # ended on an authentication failure, a rate limit, or a
-                # dropped connection.
-                self._failure = f"{type(error).__name__}: {error}"
-                raise
-            self._fold(turn.usage)
-            # The deadline is checked between calls, and this call happened
-            # *inside* one. Without this a request that overran the budget and
-            # came back with no tool calls would return normally, and the run
-            # would be recorded as having finished rather than as having run
-            # out of time.
-            #
-            # The reply is written down first, for the reason the cancel below
-            # gives: it was produced and it was billed for. Raising over it
-            # left the run graded `wall_clock_limit` with the usage folded in
-            # and no account anywhere of the answer that usage paid for --
-            # while the same answer arriving a moment later, under a cancel,
-            # was recorded in full. Two ways of ending the same turn cannot
-            # leave two different amounts of evidence behind.
-            if budget.expired():
-                self._observe({
-                    "type": "discarded",
-                    "why": "the wall-clock budget expired while this reply was in flight",
-                    "message": _discarded_message(turn),
-                })
-            self._deadline(budget)
-            if self._cancelled:
-                # The request was already in flight when the cancel arrived and
-                # this transport cannot abort one, so the answer came back
-                # after Hardy had reported the turn stopped. It is recorded --
-                # it was produced and it was billed for -- and it is not
-                # published: a reply the user is handed after being told the
-                # turn was cancelled is worse than no reply.
-                self._observe({
-                    "type": "discarded",
-                    "why": "the turn was cancelled while this reply was in flight",
-                    "message": _discarded_message(turn),
-                })
+            turn = self._call(budget)
+            if not self._kept(turn, budget):
                 return
-            # The conversation is brought up to date before anything at all is
-            # yielded. Every `yield` below is a place a consumer can stop --
-            # `--plain` taking a Ctrl+C while it draws the reply is the
-            # concrete one -- and the generator never resumes from a `yield` it
-            # was closed at. Left after the first of them, the assistant turn
-            # was recorded in `transcript.jsonl` and shown to the user while
-            # the conversation the next request is built from had never heard
-            # of it: the durable record and the model's own history diverge,
-            # which is the failure this whole loop exists to make impossible.
-            self.messages.append(Message(
-                "assistant", text=turn.text, tool_calls=turn.tool_calls,
-                reasoning=turn.reasoning, blocks=turn.blocks,
-            ))
-            placeholders = self._preanswer(turn.tool_calls)
-            # Recorded for every assistant turn, including one that said
-            # nothing and only asked for tools. Without it the transcript is a
-            # flat run of `tool_use` events, and which of them the model asked
-            # for together is unrecoverable: `a,b` then `c` and `a` then `b,c`
-            # leave identical events and the same turn count while being two
-            # different provider histories -- and two different compaction
-            # digests, which is what made the omission matter.
-            #
-            # And before the first yield, for the same reason the append above
-            # is: a consumer that closes the iterator on the `thinking` event
-            # never resumes, and the assistant turn -- kept in `self.messages`
-            # and sent on every later request -- would then be in the
-            # provider's history and in no record, with the `thinking` event
-            # and the abandoned calls left describing a turn the transcript
-            # never named.
-            assistant: dict[str, Any] = {
-                "type": "assistant",
-                "message": {"role": "assistant", "content": turn.text},
-                "tool_calls": [call.id for call in turn.tool_calls],
-            }
-            if turn.blocks:
-                # The arrangement the model chose, which the fields above
-                # cannot express: they group by kind, and this turn is sent
-                # back in its own order. Recorded because the compaction
-                # digests cover it -- a hash a reader cannot recompute is not
-                # an audit trail.
-                assistant["blocks"] = list(block_order(turn.blocks))
-            self._observe(assistant)
+            placeholders = self._record(turn)
             if turn.thinking or turn.reasoning:
                 # The blocks by digest, not by content. They are opaque
                 # provider state Hardy does not publish -- but they are *sent*,
@@ -604,6 +522,173 @@ class AgentLoop:
             if not turn.tool_calls:
                 return
             yield from self._call_tools(turn.tool_calls, placeholders, budget)
+
+    def _declined(self, budget: Budget, spoken: list[str]) -> bool:
+        """Ask `before_turn` whether this provider call is needed; True if it
+        declined, with the decline recorded and said. Raises
+        `TurnLimitReached` when it did not and the turn bound is spent.
+
+        Asked before the bound, because a run with nothing left to do has not
+        reached one. A submission accepted on the `max_turns`-th call left the
+        next iteration raising here first: the trajectory recorded a
+        `turn_limit` and a `max_turns` limit event, the runner then overwrote
+        the terminal reason to `verified`, and the record said a bound had
+        ended a run that already had its result -- with the decline that
+        actually ended it missing. The bound still binds a run that has work
+        left, because the hook returns None there.
+        """
+        declined = self._hook(lambda: self._before_turn(self.messages)) if self._before_turn is not None else None
+        if declined is None:
+            if budget.exhausted():
+                self._observe({"type": "turn_limit", "turns": budget.spent, "max_turns": self.max_turns})
+                raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
+            return False
+        # Hardy declining to spend a turn is a fact about the run, not an
+        # absence of one, so it is recorded and said out loud. Always
+        # `exchange`: this hook is asked from inside `_turns`, so a decline
+        # here is never the pre-model one a closer ladder makes. The two are
+        # told apart by the stage rather than by their prose, which a record
+        # could rewrite.
+        self._observe({"type": "declined_turn", "stage": "exchange", "why": declined})
+        spoken.append(declined)
+        # In the `user` role, not the assistant's. Hardy is the party on this
+        # side of the wire -- the steering block travels the same way -- and a
+        # decline recorded as something the model said would put words in its
+        # mouth in every later exchange that reads this conversation back.
+        self.messages.append(Message("user", text=declined))
+        return True
+
+    def _compact_messages(self) -> None:
+        """Let the compactor cut the conversation before the next call."""
+        if self._compact is None:
+            return
+        compacted = self._hook(lambda: self._compact(self.messages))
+        if compacted is not None:
+            self.messages = compacted
+            self._pending = [(message, arguments) for message, arguments in self._pending
+                             if any(current is message for current in self.messages)]
+
+    def _call(self, budget: Budget) -> ProviderTurn:
+        """One provider call, counted against the bound and its usage folded in.
+
+        Counted before the call, not after. A request that raised was still a
+        provider call: it may have been billed for, it consumed a turn of the
+        bound, and a trajectory that showed zero turns beside a provider error
+        would be describing a run that never happened. Only a call admission
+        refused before anything was sent is given back.
+        """
+        budget.spent += 1
+        try:
+            turn = self._provider.complete(
+                system=self._system_prompt,
+                messages=list(self.messages),
+                specs=self._specs,
+                timeout=budget.remaining_seconds(),
+            )
+        except SpendLimitReached as error:
+            if not error.provider_called:
+                budget.spent -= 1  # Admission refused before any actual provider call.
+            self._failure = f"SpendLimitReached: {error.limit}"
+            self._budget_refused = True
+            self._observe({"type": "budget_limit", "limit": error.limit})
+            raise
+        except ProviderRequestTimeout as error:
+            if not error.provider_called:
+                budget.spent -= 1
+                # Admission expired before this exchange sent any request.
+                self._budget_refused = True
+            self._failure = f"{type(error).__name__}: {error}"
+            raise
+        except BaseException as error:  # noqa: BLE001 - re-raised, recorded on the way past
+            # Recorded here because `_report` runs from a `finally` and
+            # would otherwise emit `is_error: false` for an exchange that
+            # ended on an authentication failure, a rate limit, or a
+            # dropped connection.
+            self._failure = f"{type(error).__name__}: {error}"
+            raise
+        self._usage.fold(turn.usage)
+        return turn
+
+    def _kept(self, turn: ProviderTurn, budget: Budget) -> bool:
+        """Whether a reply that came back is published; raises if the wall
+        clock ran out while it was in flight. A reply not published is still
+        recorded as discarded: it was produced and it was billed for.
+        """
+        # The deadline is checked between calls, and this call happened
+        # *inside* one. Without this a request that overran the budget and
+        # came back with no tool calls would return normally, and the run
+        # would be recorded as having finished rather than as having run
+        # out of time.
+        #
+        # The reply is written down first, for the reason the cancel below
+        # gives. Raising over it left the run graded `wall_clock_limit` with
+        # the usage folded in and no account anywhere of the answer that usage
+        # paid for -- while the same answer arriving a moment later, under a
+        # cancel, was recorded in full. Two ways of ending the same turn
+        # cannot leave two different amounts of evidence behind.
+        if budget.expired():
+            self._observe({
+                "type": "discarded",
+                "why": "the wall-clock budget expired while this reply was in flight",
+                "message": _discarded_message(turn),
+            })
+        self._deadline(budget)
+        if self._cancelled:
+            # The request was already in flight when the cancel arrived and
+            # this transport cannot abort one, so the answer came back after
+            # Hardy had reported the turn stopped. It is not published: a
+            # reply the user is handed after being told the turn was
+            # cancelled is worse than no reply.
+            self._observe({
+                "type": "discarded",
+                "why": "the turn was cancelled while this reply was in flight",
+                "message": _discarded_message(turn),
+            })
+            return False
+        return True
+
+    def _record(self, turn: ProviderTurn) -> list[int]:
+        """Bring the conversation and the record up to date with a reply, before
+        anything about it is yielded; the indices of its tool calls' answers.
+
+        Every `yield` is a place a consumer can stop -- `--plain` taking a
+        Ctrl+C while it draws the reply is the concrete one -- and the
+        generator never resumes from a `yield` it was closed at. Left after
+        the first of them, the assistant turn was recorded in
+        `transcript.jsonl` and shown to the user while the conversation the
+        next request is built from had never heard of it: the durable record
+        and the model's own history diverge, which is the failure this whole
+        loop exists to make impossible.
+        """
+        self.messages.append(Message(
+            "assistant", text=turn.text, tool_calls=turn.tool_calls,
+            reasoning=turn.reasoning, blocks=turn.blocks,
+        ))
+        placeholders = self._preanswer(turn.tool_calls)
+        # Recorded for every assistant turn, including one that said nothing
+        # and only asked for tools. Without it the transcript is a flat run of
+        # `tool_use` events, and which of them the model asked for together is
+        # unrecoverable: `a,b` then `c` and `a` then `b,c` leave identical
+        # events and the same turn count while being two different provider
+        # histories -- and two different compaction digests, which is what
+        # made the omission matter. And before the first yield, for the same
+        # reason the append above is: a consumer that closes the iterator on
+        # the `thinking` event never resumes, and the assistant turn -- sent
+        # on every later request -- would then be in the provider's history
+        # and in no record.
+        assistant: dict[str, Any] = {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": turn.text},
+            "tool_calls": [call.id for call in turn.tool_calls],
+        }
+        if turn.blocks:
+            # The arrangement the model chose, which the fields above cannot
+            # express: they group by kind, and this turn is sent back in its
+            # own order. Recorded because the compaction digests cover it -- a
+            # hash a reader cannot recompute is not an audit trail.
+            assistant["blocks"] = list(block_order(turn.blocks))
+        self._observe(assistant)
+        return placeholders
 
     def _hook(self, run: Callable[[], T]) -> T:
         """Run one of the caller's hooks, recording a failure of it as a failure.
@@ -773,35 +858,13 @@ class AgentLoop:
             self._observe({"type": "tool_result", "name": call.name, "call_id": call.id, "ok": result.ok})
             yield TurnEvent("tool_result", name=call.name, ok=result.ok, call_id=call.id)
 
-    def _fold(self, usage: Mapping[str, Any] | None) -> None:
-        """Accumulate the provider's counters, so the report is session-to-date."""
-        if not isinstance(usage, Mapping):
-            return
-        for key, value in usage.items():
-            if key == "cost_usd":
-                if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
-                    self._total_cost_usd += float(value)
-                    self._cost_stated = True
-                continue
-            if isinstance(value, int) and not isinstance(value, bool):
-                self._totals[str(key)] = self._totals.get(str(key), 0) + value
-                self._stated.add(str(key))
-
     def _report(self, budget: Budget) -> None:
         self._observe(ExchangeReport(
             session_id=self.session_id,
             turns=budget.spent,
             provider_unasked=self._budget_refused and budget.spent == 0,
-            # Only explicit provider USD receipts supply price; token tariffs
-            # belong to the separate spend-admission estimate.
-            cost_usd=self._total_cost_usd if self._cost_stated else None,
-            # The running total, for the counters this exchange actually
-            # stated and no others. An exchange that reported nothing -- one
-            # that ended on a provider error before any answer arrived --
-            # reports None rather than handing back the previous exchange's
-            # figures as though it had stated them itself; and one that stated
-            # some but not all of them does not silently vouch for the rest.
-            usage={key: self._totals[key] for key in sorted(self._stated)} or None,
+            cost_usd=self._usage.cost_usd,
+            usage=self._usage.usage,
             is_error=self._failure is not None,
             error=self._failure,
             # Who kept the bounds this exchange ran under. Recorded beside the
