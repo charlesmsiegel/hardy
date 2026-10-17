@@ -1,7 +1,9 @@
 """Recorded cells, kernel outcomes and replay comparisons; no live kernel."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections.abc import Callable
+from enum import Enum
+from typing import Any, Literal, TypeAlias
 
 from pydantic import Field, model_validator
 
@@ -21,16 +23,23 @@ SENTINEL_BEGIN = "«hardy-begin:{nonce}»"
 SENTINEL_END = "«hardy-end:{nonce}»"
 BackendName = Literal["sympy", "singular", "macaulay2"]
 
-# Distinguishable non-answers from a read: the deadline passed, the user
-# stopped waiting, or the stream said something that cannot belong to the cell
-# we sent.
-TIMED_OUT = object()
-DESYNCHRONISED = object()
-# The interrupt was asked for and the kernel did not answer it within the
-# grace. Distinct from `TIMED_OUT` because the cell did not exceed anything --
-# it was stopped -- and distinct from a kernel that *did* answer, which is the
-# whole point of interrupting rather than timing out.
-INTERRUPTED = object()
+class ReadFailure(Enum):
+    """Distinguishable non-answers from a read of one cell's reply."""
+
+    # The deadline passed.
+    TIMED_OUT = "timed out"
+    # The stream said something that cannot belong to the cell we sent.
+    DESYNCHRONISED = "desynchronised"
+    # The interrupt was asked for and the kernel did not answer it within the
+    # grace. Distinct from `TIMED_OUT` because the cell did not exceed anything
+    # -- it was stopped -- and distinct from a kernel that *did* answer, which
+    # is the whole point of interrupting rather than timing out.
+    INTERRUPTED = "interrupted"
+
+
+TIMED_OUT = ReadFailure.TIMED_OUT
+DESYNCHRONISED = ReadFailure.DESYNCHRONISED
+INTERRUPTED = ReadFailure.INTERRUPTED
 
 # How hard a stop has been asked for: signal and let the kernel answer, or stop
 # waiting for an answer. Mirrors the levels `process` keeps for its own
@@ -70,6 +79,14 @@ class CellOutcome(FrozenModel):
     # without the signal would then not reproduce it. It is recorded and
     # reported like any other cell; it just cannot be built on.
     signalled: bool = False
+
+
+# One cell's reply as a backend's extractor reads it out of the kernel's
+# stdout: the outcome, and how many bytes of the stream it took. An extractor
+# answers `None` while the reply is still arriving, and `DESYNCHRONISED` when
+# the bytes cannot be a reply to the cell that was sent.
+Reply: TypeAlias = tuple[CellOutcome, int]
+Extractor: TypeAlias = Callable[[bytes], Reply | ReadFailure | None]
 
 
 # Fields this model used to carry, dropped on the way in rather than refused.

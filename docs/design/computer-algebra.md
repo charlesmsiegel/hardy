@@ -469,6 +469,15 @@ Singular and Macaulay2 are available when configured through `cas_backend` and
 better suited to algebraic geometry and far worse suited to Windows, where
 Macaulay2 has no native build at all.
 
+Every backend implements one contract, `CasBackend` (`algebra/backends.py`).
+The two reply protocols differ in more than framing: whether stderr shares
+stdout's pipe (`capture_mode`), whether the interpreter reports a cell's status
+or Hardy reads it from a banner (`reports_status`), whether a frame's own stop
+bit is the stop, how much output the parent may retain, and how a reply is
+read out of the stream. Each of those is a member of the contract rather than
+a check on a protocol name in the session, the replay, or the export, so a
+third protocol is a third implementation.
+
 Cells from one backend are never replayed under another. A segment recorded by
 a different backend is refused with an instruction to reset or to restore the
 original setting, because feeding one backend's language to another proves

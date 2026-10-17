@@ -1,15 +1,138 @@
 """Backend-specific framing and rendering; differing CAS semantics stay explicit."""
 from __future__ import annotations
 
+import abc
 import ast
 import json
 import re
 import sys
 from collections import Counter
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from types import MappingProxyType
+from typing import Literal, Protocol
 
-from hardy.algebra.contracts import HEADER_BYTES, SENTINEL_BEGIN, SENTINEL_END, BackendName
+from hardy.algebra.contracts import (
+    DESYNCHRONISED,
+    HEADER_BYTES,
+    SENTINEL_BEGIN,
+    SENTINEL_END,
+    BackendName,
+    CellOutcome,
+    Extractor,
+    ReadFailure,
+    Reply,
+)
+from hardy.algebra.kernel import Kernel
+
+CaptureMode = Literal["separate", "merged"]
+
+# The driver's default retention cap, when a caller names none.
+DEFAULT_OUTPUT_BYTES = 256 * 1024
+# The widest a byte of captured text becomes in the driver's JSON reply: a
+# control byte is written as a six-byte backslash-u escape.
+_JSON_ESCAPE_BYTES = 6
+# Room in a reply for what surrounds the captured text: its keys, its status,
+# and the namespace digest.
+_REPLY_ENVELOPE_BYTES = 65_536
+
+
+class CasBackend(Protocol):
+    """What a session, a replay and an export need from one interpreter.
+
+    There are two reply protocols behind it. `SympyBackend` speaks to Hardy's
+    own driver in length-prefixed JSON, which reports each cell's status and a
+    fingerprint of its namespace. `SentinelBackend` speaks to a line-oriented
+    interpreter between echoed markers, where Hardy infers the status from an
+    error banner and nothing describes the namespace. Every difference between
+    them that the rest of the package acts on is a member here, so a third
+    protocol is a third implementation rather than a new arm at each caller.
+    """
+
+    name: BackendName
+    script_suffix: str
+    language: str
+    kernel_name: str
+    # The line-comment marker the exported script's header and notes use.
+    comment: str
+    # What the script runs before the first cell, as the kernel did.
+    preamble: str
+    version_source: str
+    # A statement printing `{marker}`: the brackets around a transcript.
+    echo: str
+    # The conditions the kernel and the exported script both run under, and
+    # which the manifest records as the ones the verdict was checked under.
+    environment: Mapping[str, str]
+    # Whether the exported script is fed on stdin, as the session feeds cells.
+    script_stdin: bool
+    # Whether stderr shares stdout's pipe, so a record's `stdout` holds both.
+    capture_mode: CaptureMode
+    # Whether the interpreter reports each cell's status itself. Where Hardy
+    # infers it from an error banner instead, a clipped transcript cannot
+    # support `ok`.
+    reports_status: bool
+    # Whether a frame's `stopping` bit is itself the stop. Where it is, no
+    # signal follows it; where it is not, the signal is the only carrier.
+    frame_carries_stop: bool
+    # The banner that marks a failed statement in a script's output, for an
+    # interpreter that reports an error and carries on with exit status 0.
+    error_pattern: re.Pattern[str] | None
+    # Lines a script run writes to stderr on the interpreter's own account.
+    script_stderr_chrome: tuple[re.Pattern[str], ...]
+
+    @property
+    def transcript_prologue(self) -> tuple[str, ...]:
+        """Statements opening the script's own transcript, with `{begin}`."""
+        ...
+
+    @property
+    def transcript_epilogue(self) -> tuple[str, ...]:
+        """Statements closing it, with `{end}` and perhaps `{finished}`."""
+        ...
+
+    def argv(self, command: Path | None, max_output_bytes: int = DEFAULT_OUTPUT_BYTES) -> tuple[str, ...]:
+        """How the persistent kernel is started."""
+        ...
+
+    def script_argv(self, command: Path | None, script: Path) -> tuple[str, ...]:
+        """How an exported script is run, the way a reader would run it."""
+        ...
+
+    def frame(self, source: str, nonce: str, *, stopping: bool = False) -> bytes:
+        """One cell, as the kernel reads it."""
+        ...
+
+    def retention(self, cap: int) -> int:
+        """How many bytes of output the parent's reader may keep per cell."""
+        ...
+
+    def arm(self, kernel: Kernel, nonce: str) -> None:
+        """Ready the kernel's buffers for the reply to the cell about to go out."""
+        ...
+
+    def extractor(self, kernel: Kernel | None, nonce: str, fed: str) -> Extractor:
+        """Read that reply out of what the kernel has written so far."""
+        ...
+
+    def release(self, kernel: Kernel, consumed: int) -> None:
+        """Let go of the bytes a reply was read from."""
+        ...
+
+    def partial(self, kernel: Kernel, outcome: CellOutcome) -> CellOutcome:
+        """`outcome`, for a cell with no complete reply, with what did arrive."""
+        ...
+
+    def sanitize(self, stdout: str, fed: str = "") -> str:
+        """Clean an interpreter's own noise out of what a cell printed."""
+        ...
+
+    def render_cell(self, source: str) -> str:
+        """A cell as the exported script writes it."""
+        ...
+
+    def parse_version(self, sanitized_stdout: str) -> str:
+        """The bare version string out of the version probe's reply."""
+        ...
 
 
 def _source_offset(source: str, lineno: int, col_offset: int) -> int:
@@ -25,6 +148,39 @@ def _source_offset(source: str, lineno: int, col_offset: int) -> int:
     prefix = sum(len(line) for line in lines[: lineno - 1])
     within = lines[lineno - 1].encode("utf-8")[:col_offset].decode("utf-8", errors="ignore")
     return prefix + len(within)
+
+
+def _expression_span(source: str, node: ast.stmt) -> tuple[int, int]:
+    """Where `node` starts and ends in `source`, as character indices."""
+    start = _source_offset(source, node.lineno, node.col_offset)
+    end = _source_offset(source, node.end_lineno or node.lineno, node.end_col_offset or 0)
+    return start, end
+
+
+def _length_reply(raw: bytes) -> Reply | ReadFailure | None:
+    """The driver's reply: a ten-digit length, then that many bytes of JSON."""
+    if len(raw) < HEADER_BYTES:
+        return None
+    try:
+        length = int(raw[:HEADER_BYTES].decode("ascii"))
+    except (ValueError, UnicodeDecodeError):
+        return DESYNCHRONISED
+    body = raw[HEADER_BYTES : HEADER_BYTES + length]
+    if len(body) < length:
+        return None
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return DESYNCHRONISED
+    outcome = CellOutcome(
+        status=payload.get("status", "ok"),
+        stdout=payload.get("stdout", ""),
+        stderr=payload.get("stderr", ""),
+        value_repr=payload.get("value_repr", ""),
+        capture_truncated=bool(payload.get("capture_truncated")),
+        state_digest=str(payload.get("state_digest", "")),
+    )
+    return outcome, HEADER_BYTES + length
 
 
 class SympyBackend:
@@ -122,7 +278,7 @@ class SympyBackend:
     # digest -- would read it as the session having failed to reproduce. Pinned
     # for the kernel and for the exported script alike, so the file a reader
     # runs is run the way its record was made.
-    environment: dict[str, str] = {"PYTHONHASHSEED": "0"}
+    environment: Mapping[str, str] = MappingProxyType({"PYTHONHASHSEED": "0"})
     # This backend's protocol carries a fingerprint of the namespace, so a
     # record without one means something specific happened -- a value Hardy
     # could only see in prefix, or one whose repr says nothing about what it
@@ -130,8 +286,17 @@ class SympyBackend:
     # is the norm and carries no signal; `records_state` is what lets an
     # export tell those two silences apart.
     records_state = True
+    # The driver writes one frame per cell on a descriptor of its own, with
+    # stdout and stderr captured separately inside it, and reports the cell's
+    # status itself -- including that it stopped a cell its frame said to.
+    capture_mode: CaptureMode = "separate"
+    reports_status = True
+    frame_carries_stop = True
+    # A Python script fails with a non-zero exit status, not a banner.
+    error_pattern: re.Pattern[str] | None = None
+    script_stderr_chrome: tuple[re.Pattern[str], ...] = ()
 
-    def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
+    def argv(self, command: Path | None, max_output_bytes: int = DEFAULT_OUTPUT_BYTES) -> tuple[str, ...]:
         return (
             str(command) if command else sys.executable,
             "-u",
@@ -143,7 +308,7 @@ class SympyBackend:
     def script_argv(self, command: Path | None, script: Path) -> tuple[str, ...]:
         return (str(command) if command else sys.executable, "-u", str(script))
 
-    def frame(self, source: str, nonce: str, stopping: bool = False) -> bytes:
+    def frame(self, source: str, nonce: str, *, stopping: bool = False) -> bytes:
         """`stopping` is whether a stop is still in force as this cell goes out.
 
         It is how a stop the driver is *holding* gets discarded. A signal can
@@ -157,6 +322,41 @@ class SympyBackend:
             {"source": source, "stopping": stopping}, ensure_ascii=False
         ).encode("utf-8")
         return f"{len(payload):0{HEADER_BYTES}d}".encode("ascii") + payload
+
+    def retention(self, cap: int) -> int:
+        """Headroom over `cap`, because the driver clips its own output to it.
+
+        Tripping the retention limit here would mean a frame that can never be
+        assembled, and is treated as a broken kernel rather than as a large
+        answer.
+
+        The factor is six, and it is not slack. `cas_driver.run_cell` budgets
+        stdout, stderr and value_repr *jointly* against `cap`, so a payload
+        carries at most `cap` bytes of captured text -- but it carries them
+        JSON-escaped, and a control byte becomes a six-byte backslash-u escape.
+        A cell printing NUL bytes is legal, so anything smaller is a cap a
+        legal cell can walk past, and walking past it means a frame that never
+        assembles, a cell that waits out the whole timeout, and a kernel
+        dropped with all its state.
+        """
+        return cap * _JSON_ESCAPE_BYTES + _REPLY_ENVELOPE_BYTES
+
+    def arm(self, kernel: Kernel, nonce: str) -> None:
+        """Discard everything read so far: the driver writes one frame and
+        nothing else, so there is never anything worth keeping behind it."""
+        kernel.clear()
+
+    def extractor(self, kernel: Kernel | None, nonce: str, fed: str) -> Extractor:
+        """The length header says where the reply ends; the driver echoes
+        nothing, so neither the nonce nor what was fed matters here."""
+        return _length_reply
+
+    def release(self, kernel: Kernel, consumed: int) -> None:
+        """Nothing to do: `arm` clears the stream before the next cell."""
+
+    def partial(self, kernel: Kernel, outcome: CellOutcome) -> CellOutcome:
+        """A frame that never assembled has nothing worth quoting."""
+        return outcome
 
     def sanitize(self, stdout: str, fed: str = "") -> str:
         """No cleanup: the driver hands back exactly what the cell captured."""
@@ -187,13 +387,7 @@ class SympyBackend:
             return source
         if not parsed.body or not isinstance(parsed.body[-1], ast.Expr):
             return source
-        trailing = parsed.body[-1]
-        start = _source_offset(source, trailing.lineno, trailing.col_offset)
-        end = _source_offset(
-            source,
-            trailing.end_lineno or trailing.lineno,
-            trailing.end_col_offset or 0,
-        )
+        start, end = _expression_span(source, parsed.body[-1])
         # The inner parentheses are load-bearing and are not the call's. A
         # trailing expression may have a top-level comma -- `x, y` is ordinary
         # CAS usage -- and an argument list splits on exactly that: `x, y`
@@ -208,7 +402,46 @@ class SympyBackend:
         return sanitized_stdout
 
 
-class SentinelBackend:
+def _find_marker(raw: bytes, marker: bytes, after: int, echo_tail: bytes) -> int:
+    """Where the interpreter printed `marker`, skipping its echo of the source.
+
+    A backend that echoes stdin (confirmed of Macaulay2: it prints `iN : `
+    followed by the exact line it was fed, tty or not) writes the marker text a
+    *second* time before the real one: once inside its own echoed source line
+    (`iN : << "«marker»" << endl;`), and only afterwards as the bare line the
+    `<<` statement actually prints. A bare `raw.find(marker)` matches the
+    first, embedded occurrence, and every cell's captured body ends up carrying
+    a fragment of that echoed statement.
+
+    The two occurrences are told apart by what immediately follows them, not by
+    what precedes them -- a preceding newline is not a reliable signal, since
+    an in-flight prompt from the *previous* cell can legitimately sit directly
+    in front of the real marker too (see
+    `test_state_is_not_polluted_by_the_previous_cells_prompt`, which exists
+    precisely to pin that down). The embedded copy is always immediately
+    followed by `echo_tail`, the fixed tail of the echo template itself
+    (`" << endl;` for Macaulay2, `");` for Singular), because that is what is on
+    the rest of the line we sent; the real, bare-printed copy never is.
+    Skipping any occurrence with that tail right after it, and continuing the
+    search past it, finds the real one regardless of what backend-specific
+    noise precedes either.
+    """
+    pos = after
+    while (hit := raw.find(marker, pos)) != -1:
+        echoed_end = hit + len(marker)
+        following = raw[echoed_end : echoed_end + len(echo_tail)]
+        # A read boundary is not a language boundary. Until a byte
+        # distinguishes a bare marker from its echoed source, wait.
+        if echo_tail.startswith(following) and len(following) < len(echo_tail):
+            return -1
+        if following == echo_tail:
+            pos = echoed_end
+            continue
+        return hit
+    return -1
+
+
+class SentinelBackend(abc.ABC):
     """An interpreter reading stdin, framed by a nonce it is asked to echo.
 
     Less trustworthy than the driver protocol and unavoidable: neither Singular
@@ -222,14 +455,27 @@ class SentinelBackend:
     outside this protocol, which does not isolate or certify computations.
     """
 
-    framing = "sentinel"
+    name: BackendName
+    script_suffix: str
+    language: str
+    kernel_name: str
+    comment: str
+    preamble: str
+    version_source: str
     error_pattern: re.Pattern[str]
     echo: str
-    environment: dict[str, str] = {}
+    environment: Mapping[str, str] = MappingProxyType({})
     # Neither Singular nor Macaulay2 can be asked what is in its namespace, so
     # every record from them is digestless and no verdict can be drawn from
     # that. What their replays check is what those replays can check.
     records_state = False
+    # Both child descriptors share one pipe (see the class docstring), the
+    # status is Hardy's reading of an error banner, and a frame is plain
+    # source with no word in it for a stop.
+    capture_mode: CaptureMode = "merged"
+    reports_status = False
+    frame_carries_stop = False
+    script_stderr_chrome: tuple[re.Pattern[str], ...] = ()
 
     @property
     def transcript_prologue(self) -> tuple[str, ...]:
@@ -250,8 +496,9 @@ class SentinelBackend:
     # would be the defect this check exists to catch.
     script_stdin = True
 
-    def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
-        raise NotImplementedError
+    @abc.abstractmethod
+    def argv(self, command: Path | None, max_output_bytes: int = DEFAULT_OUTPUT_BYTES) -> tuple[str, ...]:
+        """How this interpreter is started reading cells from stdin."""
 
     def script_argv(self, command: Path | None, script: Path) -> tuple[str, ...]:
         return self.argv(command)
@@ -260,7 +507,7 @@ class SentinelBackend:
         """Verbatim. These interpreters print a statement's value themselves."""
         return source
 
-    def frame(self, source: str, nonce: str, stopping: bool = False) -> bytes:
+    def frame(self, source: str, nonce: str, *, stopping: bool = False) -> bytes:
         """`stopping` is accepted and ignored: a line-oriented interpreter has
         no protocol for a stop it is holding, and nothing to discard."""
         begin = SENTINEL_BEGIN.format(nonce=nonce)
@@ -275,8 +522,94 @@ class SentinelBackend:
         ).encode("utf-8")
 
     def classify(self, stdout: str, stderr: str = "") -> Literal["ok", "error"]:
+        """A cell's status, read from its transcript: an error banner fails it."""
         found = self.error_pattern.search(stdout) or self.error_pattern.search(stderr)
         return "error" if found else "ok"
+
+    def retention(self, cap: int) -> int:
+        """`cap` itself. There is no framing here for a cut to break, so the
+        parent's reader enforces the cap directly and keeps scanning for the
+        end marker past it."""
+        return cap
+
+    def arm(self, kernel: Kernel, nonce: str) -> None:
+        """Scan for this cell's end marker without discarding what is buffered.
+
+        Whatever the previous cell left behind is settled by pipe order once
+        the extractor finds this cell's begin marker.
+        """
+        kernel.rearm(SENTINEL_END.format(nonce=nonce).encode())
+
+    def extractor(self, kernel: Kernel | None, nonce: str, fed: str) -> Extractor:
+        """Read one cell's reply from between its begin and end markers.
+
+        `fed` is the framed text this cell was sent, for `sanitize` to
+        recognise the interpreter's echo of it.
+        """
+        begin = SENTINEL_BEGIN.format(nonce=nonce).encode("utf-8")
+        end = SENTINEL_END.format(nonce=nonce).encode("utf-8")
+        echo_tail = self.echo.rsplit("{marker}", 1)[1].encode("utf-8")
+
+        def extract(raw: bytes) -> Reply | None:
+            # A pipe preserves write order, so whatever the previous cell
+            # printed -- including a prompt still arriving when this cell was
+            # armed -- is necessarily before this cell's begin marker in the
+            # stream, however late it happens to show up. Waiting for the
+            # begin marker before looking at anything excludes it without
+            # ever having to guess whether it has fully arrived.
+            begin_at = _find_marker(raw, begin, 0, echo_tail)
+            if begin_at == -1:
+                return None
+            start = begin_at + len(begin)
+            # `marker_seen` is the *scanner's* answer, and the scanner is a
+            # bare `in` test over a rolling tail: it cannot tell a marker the
+            # interpreter printed from a marker the interpreter echoed off its
+            # own stdin. Macaulay2 echoes, and it flushes the echoed end-marker
+            # statement a statement before it runs it -- so trusting
+            # `marker_seen` on its own ends a cell at the echo and drops
+            # whatever the cell was still writing. It exists for exactly one
+            # case, where the real end marker's bytes were dropped at the
+            # retention cap and only the scan could have seen them, so it is
+            # only consulted when retention actually overflowed.
+            truncated_past_the_marker = (
+                kernel is not None and kernel.truncated and kernel.marker_seen
+            )
+            end_at = _find_marker(raw, end, start, echo_tail)
+            if end_at == -1 and not truncated_past_the_marker:
+                return None
+            if end_at != -1:
+                body = raw[start:end_at].decode("utf-8", errors="replace")
+                consumed = end_at + len(end)
+            else:
+                # Retention stopped before the end marker; scanning continued
+                # via `marker_seen`, but the bytes themselves are gone.
+                body = raw[start:].decode("utf-8", errors="replace")
+                consumed = len(raw)
+            body = self.sanitize(body, fed)
+            outcome = CellOutcome(
+                # Both child descriptors share one OS pipe. Errors written
+                # before the marker cannot arrive behind it in another drain.
+                status=self.classify(body),
+                stdout=body,
+                capture_mode="merged",
+                capture_truncated=bool(kernel and kernel.truncated),
+            )
+            return outcome, consumed
+
+        return extract
+
+    def release(self, kernel: Kernel, consumed: int) -> None:
+        """Drop the answered cell's bytes; keep anything behind its end marker."""
+        kernel.consume(consumed)
+
+    def partial(self, kernel: Kernel, outcome: CellOutcome) -> CellOutcome:
+        """Without a closing marker this is a bounded partial transcript,
+        including framing. It is preserved as diagnostics, never as success."""
+        return outcome.model_copy(update={
+            "stdout": kernel.stdout_text(),
+            "capture_mode": "merged",
+            "capture_truncated": kernel.truncated,
+        })
 
     def sanitize(self, stdout: str, fed: str = "") -> str:
         """Backend-specific stdout cleanup, applied to a cell's captured body
@@ -300,6 +633,8 @@ class SentinelBackend:
 
 
 class SingularBackend(SentinelBackend):
+    """Singular, quiet (`-q`), reporting failure with its `? ` error banner."""
+
     name: BackendName = "singular"
     script_suffix = ".sing"
     language = "singular"
@@ -316,11 +651,17 @@ class SingularBackend(SentinelBackend):
     # failure too; a lone question mark in prose is still ordinary output.
     error_pattern = re.compile(r"(?m)(?:^[ \t]*|[ \t]{3,})\? ")
 
-    def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
+    def argv(self, command: Path | None, max_output_bytes: int = DEFAULT_OUTPUT_BYTES) -> tuple[str, ...]:
         return (str(command) if command else "Singular", "-q")
 
 
 class Macaulay2Backend(SentinelBackend):
+    """Macaulay2, whose echo, output counters and stderr banners need taming.
+
+    Every rule below was fixed against a pinned build's verbatim transcript;
+    each comment names the CI run that showed it.
+    """
+
     name: BackendName = "macaulay2"
     script_suffix = ".m2"
     language = "macaulay2"
@@ -516,6 +857,7 @@ class Macaulay2Backend(SentinelBackend):
         )
 
     def parse_version(self, sanitized_stdout: str) -> str:
+        """The version alone, without the `o = ` marker `sanitize` keeps."""
         # Confirmed of CI run 30168046413's "Debug sanitized M2 stdout" step:
         # without this, session.version came back as the literal string
         # 'o = 1.26.06' -- the `o = ` value marker `sanitize` leaves in place
@@ -534,7 +876,7 @@ class Macaulay2Backend(SentinelBackend):
         first_line, _, _ = value.partition("\n")
         return first_line
 
-    def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
+    def argv(self, command: Path | None, max_output_bytes: int = DEFAULT_OUTPUT_BYTES) -> tuple[str, ...]:
         # `-s` was a guess and is obsolete in Macaulay2 1.26.06 (CI run
         # 30166702246: "error: command line option -s is obsolete." killed the
         # kernel before it could answer the version probe). Dropped, not
@@ -542,14 +884,15 @@ class Macaulay2Backend(SentinelBackend):
         return (str(command) if command else "M2", "--no-readline", "-q")
 
 
-BACKENDS: dict[str, Any] = {
+BACKENDS: dict[str, Callable[[], CasBackend]] = {
     "sympy": SympyBackend,
     "singular": SingularBackend,
     "macaulay2": Macaulay2Backend,
 }
 
 
-def backend_for(name: str) -> Any:
+def backend_for(name: str) -> CasBackend:
+    """The backend `cas_backend` names, or a `ValueError` listing the known ones."""
     try:
         return BACKENDS[name]()
     except KeyError:
