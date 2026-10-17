@@ -38,6 +38,8 @@ class CellJournal:
         self.records: list[CellRecord] = []
         self._lease: FileLock | None = None
         self._lease_identity: tuple[int, int] | None = None
+        # Terminal: a closed journal is never owned again by this process.
+        self.closed = False
         self._spend_name = path.name + ".spend.json"
 
     # ---------------------------------------------------------------- lease
@@ -85,7 +87,9 @@ class CellJournal:
         if (info.st_dev, info.st_ino) != self._lease_identity:
             raise CasError("the CAS writer lease was replaced; close and reopen the session")
 
-    def release(self) -> None:
+    def close(self) -> None:
+        """Give the log up for good: release the lease and never take it again."""
+        self.closed = True
         if self._lease is not None:
             self._lease.__exit__(None, None, None)
             self._lease = None
@@ -285,3 +289,15 @@ class CellJournal:
     def accepted(self) -> tuple[CellRecord, ...]:
         """The live segment's accepted cells: what recovery and export rebuild from."""
         return tuple(record for record in self.cells() if record.accepted)
+
+    def foreign_backend(self, backend: str) -> str | None:
+        """The backend named on the live segment's records, if it is not `backend`.
+
+        Reset boundaries count: they carry the backend that opened the segment.
+        Records written before the field existed name none and are not foreign.
+        """
+        segment = self.segment
+        for record in self.records:
+            if record.segment == segment and record.backend and record.backend != backend:
+                return record.backend
+        return None
