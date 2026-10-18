@@ -267,8 +267,24 @@ class TexAdapter:
         return texts, manifest
 
 
+def _environment_labels(text: str) -> dict[int, str]:
+    """Bind each environment opening to its first local label, restoring nested owners."""
+    labels: dict[int, str] = {}
+    owners: list[tuple[str, int]] = []
+    tokens = re.finditer(r"\\begin\{(?P<opening>[A-Za-z*]+)\}|\\end\{(?P<closing>[A-Za-z*]+)\}|\\label\{(?P<label>[^}]*)\}", text)
+    for token in tokens:
+        if token.group("opening") is not None:
+            owners.append((token.group("opening"), token.start()))
+        elif token.group("closing") is not None:
+            if owners and owners[-1][0] == token.group("closing"):
+                owners.pop()
+        elif owners:
+            labels.setdefault(owners[-1][1], token.group("label"))
+    return labels
+
+
 def observe_tex(representation: DerivedRepresentation, text: str, artifact_sha256: str, *, separators: tuple[int, ...] | None = None) -> tuple[StructuralObservation, ...]:
-    """Observations from TeX's own structure over the assembled reading."""
+    """Read supported structural commands; this observer does not elaborate TeX macros."""
     rep = representation.id
     found: list[StructuralObservation] = []
 
@@ -281,19 +297,7 @@ def observe_tex(representation: DerivedRepresentation, text: str, artifact_sha25
 
     for match in SECTION.finditer(text):
         add(ObservationKind.HEADING, match.start(), match.end(), (("level", LEVELS[match.group("level")]), ("number", ""), ("title", match.group("title").strip())), "sectioning command")
-    # Assign each label to its nearest open environment. Closing a nested
-    # environment restores the outer owner, so its later label remains local.
-    labels_by_opening: dict[int, str] = {}
-    owners: list[tuple[str, int]] = []
-    tokens = re.finditer(r"\\begin\{(?P<opening>[A-Za-z*]+)\}|\\end\{(?P<closing>[A-Za-z*]+)\}|\\label\{(?P<label>[^}]*)\}", text)
-    for token in tokens:
-        if token.group("opening") is not None:
-            owners.append((token.group("opening"), token.start()))
-        elif token.group("closing") is not None:
-            if owners and owners[-1][0] == token.group("closing"):
-                owners.pop()
-        elif owners:
-            labels_by_opening.setdefault(owners[-1][1], token.group("label"))
+    labels_by_opening = _environment_labels(text)
 
     open_envs: list[tuple[str, int, int, str | None]] = []
     for match in re.finditer(r"\\begin\{(?P<env>[A-Za-z*]+)\}(?:\[(?P<name>[^\]]*)\])?|\\end\{(?P<env2>[A-Za-z*]+)\}", text):
