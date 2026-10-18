@@ -1,8 +1,8 @@
 """Acquire a definition without turning model choices into mathematical authority.
 
-Theory: search and synthesis propose a realization; B2 alone accepts exact owner
+Theory: search and synthesis propose a realization; ledger policy accepts exact owner
 evidence. Prefer explicit mappings and bodies before exposing opaque assumptions.
-Reused: A3 admission filters, ledger records and the acquisition proposal seam.
+Reused: admission filters, ledger records and the acquisition proposal seam.
 Assumes: named search/save operations report their own work and execute trusted
 Lean in disposable environments; no live adapter or isolation is installed here.
 Watch: adequacy of a mapping is semantic review, never inferred from its name.
@@ -18,10 +18,16 @@ from pydantic import model_validator
 
 from hardy.formal.syntax import IDENTIFIER
 from hardy.foundation.values import FrozenModel
-from hardy.workflows.acquisition.contracts import ResolverResult, SearchMatch, SearchRecord
+from hardy.workflows.acquisition.contracts import (
+    ClassifiedGap,
+    ResolverResult,
+    SearchMatch,
+    SearchRecord,
+)
 from hardy.workflows.admission import (
     AdmissionPolicy,
     AdmissionRequest,
+    CheckDecision,
     ProbeOperations,
     TrustRequestKind,
 )
@@ -48,6 +54,7 @@ def _fragment(value: str) -> None:
 
 
 class LocalDefinition(FrozenModel):
+    """A concrete single-declaration body, still requiring the formal owner's check."""
     name: Text
     lean_type: Text
     body: Text
@@ -67,11 +74,13 @@ class LocalDefinition(FrozenModel):
 
 
 class CharacterizingAssumption(FrozenModel):
+    """A proposed law for an opaque carrier; naming it grants no trust."""
     name: Text
     statement: Text
 
 
 class OpaqueDefinition(FrozenModel):
+    """A carrier and its proposed laws, kept explicit until admission or proof."""
     name: Text
     lean_type: Text
     reason: Text
@@ -89,13 +98,14 @@ class OpaqueDefinition(FrozenModel):
 
 
 class DefinitionMapping(FrozenModel):
+    """An exact search hit selected for formal materialization."""
     source: Literal["mathlib", "local"]
     hit: SearchMatch
     reason: Text
 
 
 class DefinitionMaterialization(FrozenModel):
-    """A formal owner's artifacts and claimed references, reauthenticated by B2."""
+    """A formal owner's artifacts and references, reauthenticated by ledger policy."""
     artifacts: tuple[ArtifactRef, ...] = ()
     evidence: tuple[EvidenceRef, ...] = ()
 
@@ -106,6 +116,7 @@ class DefinitionUnavailable(ValueError):
 
 @dataclass(frozen=True)
 class DefinitionQuery:
+    """The exact ledger subject and obligation supplied to definition operations."""
     snapshot: LedgerSnapshot
     obligation: Obligation
     item: ProjectItem
@@ -113,6 +124,7 @@ class DefinitionQuery:
 
 @dataclass(frozen=True)
 class DefinitionOptions:
+    """Search receipts and concrete failures available to the next fallback choice."""
     query: DefinitionQuery
     local: SearchRecord
     mathlib: SearchRecord
@@ -121,6 +133,7 @@ class DefinitionOptions:
 
 
 class DefinitionResolver:
+    """Prefer mappings, then concrete bodies, before proposing explicit assumptions."""
     def __init__(self, *,
                  model: RepresentationModel,
                  search_local: Callable[[DefinitionQuery], SearchRecord],
@@ -140,7 +153,8 @@ class DefinitionResolver:
         self.probes = probes
         self.admission = AdmissionPolicy()
 
-    def resolve(self, snapshot: LedgerSnapshot, obligation: Obligation, gap=None) -> ResolverResult:
+    def resolve(self, snapshot: LedgerSnapshot, obligation: Obligation,
+                gap: ClassifiedGap | None = None) -> ResolverResult:
         obligation = Obligation.model_validate(obligation.model_dump())
         item = snapshot.get(obligation.item)
         if (not isinstance(item, ProjectItem) or obligation.kind != ObligationKind.DEFINE
@@ -153,40 +167,60 @@ class DefinitionResolver:
         if local.source != "local" or mathlib.source != "mathlib":
             raise ValueError("search receipts have the wrong source")
         options = DefinitionOptions(query, local, mathlib)
+        result, options = self._mapped(options)
+        if result is not None:
+            return result
+        result, options = self._defined(options)
+        if result is not None:
+            return result
+        return self._opaque(options)
+
+    def _mapped(self, options: DefinitionOptions) -> tuple[ResolverResult | None, DefinitionOptions]:
+        """Materialize an exact searched mapping, retaining a failure for fallback."""
+        query = options.query
         mapping = self.select_mapping(options)
         if mapping is not None:
             mapping = DefinitionMapping.model_validate(mapping.model_dump())
-            searched = mathlib if mapping.source == "mathlib" else local
+            searched = options.mathlib if mapping.source == "mathlib" else options.local
             if mapping.hit not in searched.hits:
                 raise ValueError("mapping must select an exact searched candidate")
             if mapping.source == "local" and (
-                mapping.hit.item is None or snapshot.head(mapping.hit.item.id).ref != mapping.hit.item
+                mapping.hit.item is None or query.snapshot.head(mapping.hit.item.id).ref != mapping.hit.item
             ):
                 raise ValueError("local mapping requires a current exact item")
             try:
                 materialized = self.materialize(query, mapping)
             except DefinitionUnavailable as error:
-                options = DefinitionOptions(query, local, mathlib, mapping_failure=str(error))
+                options = DefinitionOptions(query, options.local, options.mathlib, mapping_failure=str(error))
             else:
                 return self._result(options, mapping.source, mapping.reason, materialized,
-                                    candidate=mapping.model_dump_json())
+                                    candidate=mapping.model_dump_json()), options
+        return None, options
+
+    def _defined(self, options: DefinitionOptions) -> tuple[ResolverResult | None, DefinitionOptions]:
+        """Try a concrete local body before making any opaque proposal."""
         definition = self.create_local(options)
         failure = "No real local definition was supplied"
         if definition is not None:
             definition = LocalDefinition.model_validate(definition.model_dump())
             try:
-                materialized = self.materialize(query, definition)
+                materialized = self.materialize(options.query, definition)
             except DefinitionUnavailable as error:
                 failure = str(error)
             else:
                 return self._result(options, "local_definition", definition.reason, materialized,
-                                    candidate=definition.model_dump_json())
-        options = DefinitionOptions(query, local, mathlib, failure, options.mapping_failure)
-        if not local.complete or not mathlib.complete:
+                                    candidate=definition.model_dump_json()), options
+        return None, DefinitionOptions(options.query, options.local, options.mathlib,
+                                       failure, options.mapping_failure)
+
+    def _opaque(self, options: DefinitionOptions) -> ResolverResult:
+        """Probe a permitted assumption proposal without installing it as a premise."""
+        item, obligation = options.query.item, options.query.obligation
+        if not options.local.complete or not options.mathlib.complete:
             return self._result(options, "unresolved", "Complete local and Mathlib search is required before opacity")
         opaque = self.propose_opaque(options)
         if opaque is None:
-            return self._result(options, "unresolved", failure)
+            return self._result(options, "unresolved", options.local_failure)
         opaque = OpaqueDefinition.model_validate(opaque.model_dump())
         refusal = self.admission.request_refusal(AdmissionRequest(
             TrustRequestKind.GLOBAL_ASSUMPTION, item.ref, obligation.scope))
@@ -203,6 +237,11 @@ class DefinitionResolver:
                                                      "statement", contextual_probes))
         if refusal := next((check.refusal for check in checks if check.refusal), None):
             return self._result(options, "unresolved", refusal)
+        return self._opaque_proposal(options, opaque, checks)
+
+    def _opaque_proposal(self, options: DefinitionOptions, opaque: OpaqueDefinition,
+                         checks: list[CheckDecision]) -> ResolverResult:
+        obligation = options.query.obligation
         records = []
         children = []
         for index, (name, statement, kind) in enumerate([

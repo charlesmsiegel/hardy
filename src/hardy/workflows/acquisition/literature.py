@@ -56,11 +56,13 @@ from hardy.workflows.representation import RepresentationModel
 
 
 class LiteratureSelection(FrozenModel):
+    """An inventoried statement pinned to an exact paper version."""
     paper_id: Text
     statement_ref: Text
 
 
 class HypothesisComparison(FrozenModel):
+    """A source premise and its claimed availability at the citation use site."""
     hypothesis: Text
     availability: Literal["established", "unresolved", "unavailable"]
     reason: Text
@@ -68,6 +70,7 @@ class HypothesisComparison(FrozenModel):
 
 
 class LiteratureComparison(FrozenModel):
+    """Semantic comparison of the required claim with a source and its premises."""
     required_statement: Text
     required_hypotheses: tuple[Text, ...]
     hypotheses: tuple[HypothesisComparison, ...]
@@ -84,6 +87,7 @@ class LiteratureComparison(FrozenModel):
 
 @dataclass(frozen=True)
 class LiteratureQuery:
+    """An exact acquisition request; local hypotheses do not alter the source text."""
     snapshot: LedgerSnapshot
     obligation: Obligation
     subject: ProjectItem
@@ -92,6 +96,7 @@ class LiteratureQuery:
 
 @dataclass(frozen=True)
 class LiteratureSource:
+    """The inventoried source sentence and the immutable artifacts backing it."""
     paper: PaperRecord
     statement: Statement
     evidence: SourceEvidence
@@ -106,6 +111,7 @@ class LiteratureReading:
 
 
 class LiteratureResolver:
+    """Propose faithful citation candidates while retaining admission and premise work."""
     def __init__(self, *, library: PaperLibrary, model: RepresentationModel,
                  search: Callable[[LiteratureQuery], tuple[LiteratureSelection, ...]],
                  compare: Callable[[LiteratureQuery, LiteratureSource], LiteratureComparison],
@@ -134,25 +140,12 @@ class LiteratureResolver:
         gap = ClassifiedGap.model_validate(gap.model_dump())
         if gap.kind.value != "literature":
             raise ValueError("literature resolver requires a literature classification")
-        subject = snapshot.get(work.item)
-        if not isinstance(subject, ProjectItem) or not subject.statement:
-            raise ValueError("literature acquisition requires an exact stated project item")
-        for record in (work, subject, work.scope):
-            if snapshot.get(record.ref) != record or snapshot.head(record.id).ref != record.ref:
-                raise ValueError("stale literature obligation, subject or scope")
-        if work.context != subject.context or gap.obligation != work:
-            raise ValueError("literature request has a different context or classified obligation")
-        if work.context is not None:
-            context = snapshot.get(work.context)
-            if not isinstance(context, MathematicalContext):
-                raise ValueError("literature context is not a mathematical context")
-        if work.kind.value not in {"acquire_prerequisite", "check_citation"} or work.status.value not in {"open", "investigating"}:
-            raise ValueError("literature resolution requires an open acquisition/citation obligation")
+        query = self._query(snapshot, work, gap)
+        subject = query.subject
         request = AdmissionRequest(TrustRequestKind.PAPER_STATEMENT_ASSUMPTION, work.item, work.scope)
         refusal = self.admission.request_refusal(request)
         if refusal:
             return ResolverResult(detail=refusal)
-        query = LiteratureQuery(snapshot, work, subject, gap)
         prefix = f"{work.id}:literature:{work.digest[:16]}"
         notes: list[ProjectItem] = []
         selections = tuple(self.search(query))
@@ -176,36 +169,61 @@ class LiteratureResolver:
             notes.append(note)
             if not usable:
                 continue
-            prepared = self.prepare(StandaloneFormalizationInput(text=source.statement.text))
-            if isinstance(prepared, SemanticBlockers):
-                prepared = SemanticBlockers.model_validate(prepared.model_dump())
-                if any(child.item != work.item or child.context != work.context or child.scope != work.scope
-                       or child.status.value != "open" for child in prepared.obligations):
-                    raise ValueError("semantic prerequisite has a different subject, scope or context")
-                return ResolverResult(records=tuple(notes), children=prepared.obligations,
-                                      detail="Source formalization retains semantic prerequisites")
-            if prepared.claim.original_text != source.statement.text:
-                raise ValueError("prepared formalization changed the exact source statement")
-            notes[-1] = notes[-1].model_copy(update={"semantics": (
-                *notes[-1].semantics, ("frozen-claim", prepared.claim.model_dump_json()))})
-            if not prepared.elaboration.success:
-                return self._blocked(notes, work, prefix, "Source statement did not elaborate")
-            reading = self.review(prepared.claim)
-            verdict = FaithfulnessVerdict.model_validate(reading.verdict.model_dump())
-            if verdict.claim_sha256 != prepared.claim.content_hash:
-                raise ValueError("faithfulness review belongs to a different frozen source statement")
-            notes[-1] = notes[-1].model_copy(update={
-                "artifacts": (*notes[-1].artifacts, reading.artifact),
-                "semantics": (*notes[-1].semantics, ("faithfulness", verdict.model_dump_json()))})
-            disposition = self.admission.faithfulness(
-                reached=verdict.outcome != FaithfulnessOutcome.UNAVAILABLE, agreed=verdict.agreed)
-            if disposition != FaithfulnessDisposition.ACCEPT:
-                return self._blocked(notes, work, prefix, f"Source faithfulness {disposition.value}")
-            return self._candidate(query, prefix, notes, source, comparison, prepared, reading)
+            return self._formalize(query, prefix, notes, source, comparison)
         detail = "No applicable source statement was found"
         if len(selections) > self.max_candidates:
             detail += "; candidate search limit reached"
         return ResolverResult(records=tuple(notes), detail=detail)
+
+    @staticmethod
+    def _query(snapshot: LedgerSnapshot, work: Obligation, gap: ClassifiedGap) -> LiteratureQuery:
+        """Bind a literature request to its current exact subject, context and scope."""
+        subject = snapshot.get(work.item)
+        if not isinstance(subject, ProjectItem) or not subject.statement:
+            raise ValueError("literature acquisition requires an exact stated project item")
+        for record in (work, subject, work.scope):
+            if snapshot.get(record.ref) != record or snapshot.head(record.id).ref != record.ref:
+                raise ValueError("stale literature obligation, subject or scope")
+        if work.context != subject.context or gap.obligation != work:
+            raise ValueError("literature request has a different context or classified obligation")
+        if work.context is not None:
+            context = snapshot.get(work.context)
+            if not isinstance(context, MathematicalContext):
+                raise ValueError("literature context is not a mathematical context")
+        if work.kind.value not in {"acquire_prerequisite", "check_citation"} or work.status.value not in {"open", "investigating"}:
+            raise ValueError("literature resolution requires an open acquisition/citation obligation")
+        return LiteratureQuery(snapshot, work, subject, gap)
+
+    def _formalize(self, query: LiteratureQuery, prefix: str, notes: list[ProjectItem],
+                   source: LiteratureSource, comparison: LiteratureComparison) -> ResolverResult:
+        """Formalize the inventoried source independently, then require its faithful reading."""
+        work = query.obligation
+        prepared = self.prepare(StandaloneFormalizationInput(text=source.statement.text))
+        if isinstance(prepared, SemanticBlockers):
+            prepared = SemanticBlockers.model_validate(prepared.model_dump())
+            if any(child.item != work.item or child.context != work.context or child.scope != work.scope
+                   or child.status.value != "open" for child in prepared.obligations):
+                raise ValueError("semantic prerequisite has a different subject, scope or context")
+            return ResolverResult(records=tuple(notes), children=prepared.obligations,
+                                  detail="Source formalization retains semantic prerequisites")
+        if prepared.claim.original_text != source.statement.text:
+            raise ValueError("prepared formalization changed the exact source statement")
+        notes[-1] = notes[-1].model_copy(update={"semantics": (
+            *notes[-1].semantics, ("frozen-claim", prepared.claim.model_dump_json()))})
+        if not prepared.elaboration.success:
+            return self._blocked(notes, work, prefix, "Source statement did not elaborate")
+        reading = self.review(prepared.claim)
+        verdict = FaithfulnessVerdict.model_validate(reading.verdict.model_dump())
+        if verdict.claim_sha256 != prepared.claim.content_hash:
+            raise ValueError("faithfulness review belongs to a different frozen source statement")
+        notes[-1] = notes[-1].model_copy(update={
+            "artifacts": (*notes[-1].artifacts, reading.artifact),
+            "semantics": (*notes[-1].semantics, ("faithfulness", verdict.model_dump_json()))})
+        disposition = self.admission.faithfulness(
+            reached=verdict.outcome != FaithfulnessOutcome.UNAVAILABLE, agreed=verdict.agreed)
+        if disposition != FaithfulnessDisposition.ACCEPT:
+            return self._blocked(notes, work, prefix, f"Source faithfulness {disposition.value}")
+        return self._candidate(query, prefix, notes, source, comparison, prepared, reading)
 
     def _read(self, selection: LiteratureSelection, work: Obligation) -> LiteratureSource:
         identifier = parse_id(selection.paper_id)

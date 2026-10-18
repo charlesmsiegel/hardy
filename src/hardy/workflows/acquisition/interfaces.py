@@ -2,8 +2,8 @@
 
 Theory: a structure exposes operations/properties as fields, never global axioms.
 Missing fields and interpretation prerequisites are typed work, not invented Lean.
-Reused: B4 representation identities, C1 fragment/materialization values, B2
-acceptance readers, and the formal owner's guarded named save operation.
+Reused: representation identities, definition fragment/materialization values,
+ledger acceptance readers, and the formal owner's guarded named save operation.
 Assumes: callers supply the downstream requirements and a checked writer that
 refuses unowned overwrites; no execution isolation or live adapter is added here.
 Watch: explicit dependency lists need semantic review; field closure is linear.
@@ -19,7 +19,7 @@ from pydantic import model_validator
 
 from hardy.formal.syntax import IDENTIFIER, safe_relative
 from hardy.foundation.values import FrozenModel, json_digest
-from hardy.workflows.acquisition.contracts import ResolverResult
+from hardy.workflows.acquisition.contracts import ClassifiedGap, ResolverResult
 from hardy.workflows.acquisition.definitions import DefinitionMaterialization, _fragment
 from hardy.workflows.ledger.contracts import (
     Obligation,
@@ -38,11 +38,13 @@ from hardy.workflows.representation import RepresentationModel
 
 
 class InterfaceRequirement(FrozenModel):
+    """A typed prerequisite for constructing the selected interface."""
     kind: ObligationKind
     reason: Text
 
 
 class InterfaceField(FrozenModel):
+    """An operation or property with explicit field dependencies and prerequisites."""
     name: Text
     lean_type: Text
     depends_on: tuple[Text, ...] = ()
@@ -59,7 +61,7 @@ class InterfaceField(FrozenModel):
 
 
 class InterfacePlan(FrozenModel):
-    """Implementation of B4's selected exact representation, not a new choice."""
+    """Implementation of the selected exact representation, not a new choice."""
     representation: VersionRef
     name: Text
     path: Text
@@ -99,6 +101,7 @@ class InterfaceWrite(FrozenModel):
 
 
 class InterfaceResolver:
+    """Construct a field closure only after its authenticated prerequisites close."""
     def __init__(self, *, model: RepresentationModel,
                  select_plan: Callable[[LedgerSnapshot, Obligation], InterfacePlan],
                  write_interface: Callable[[InterfaceWrite], DefinitionMaterialization],
@@ -108,16 +111,10 @@ class InterfaceResolver:
         self.write_interface = write_interface
         self.policy = policy or LedgerPolicy()
 
-    def resolve(self, snapshot: LedgerSnapshot, obligation: Obligation, gap=None) -> ResolverResult:
+    def resolve(self, snapshot: LedgerSnapshot, obligation: Obligation,
+                gap: ClassifiedGap | None = None) -> ResolverResult:
         obligation = Obligation.model_validate(obligation.model_dump())
-        representation = snapshot.get(obligation.item)
-        if (not isinstance(representation, ProjectItem) or representation.kind != ProjectItemKind.REPRESENTATION
-                or obligation.kind != ObligationKind.CONSTRUCT_INTERFACE
-                or obligation.context != representation.context
-                or snapshot.head(obligation.id) != obligation
-                or snapshot.head(representation.id) != representation
-                or snapshot.head(obligation.scope.id) != obligation.scope):
-            raise ValueError("interface materialization requires a current representation obligation")
+        representation = _current_representation(snapshot, obligation)
         plan = InterfacePlan.model_validate(self.select_plan(snapshot, obligation).model_dump())
         if plan.representation != representation.ref:
             raise ValueError("interface plan must preserve the exact selected representation")
@@ -131,14 +128,8 @@ class InterfaceResolver:
         if not children and not missing:
             source = f"import Mathlib\n\nstructure {plan.name} where\n" + "".join(
                 f"  {field.name} : {field.lean_type}\n" for field in fields)
-            request = InterfaceWrite(plan=plan, obligation=obligation, source=source)
-            materialized = DefinitionMaterialization.model_validate(self.write_interface(request).model_dump())
-            if not materialized.artifacts or not any(
-                artifact.digest == request.source_digest for artifact in materialized.artifacts
-            ):
-                raise ValueError("formal writer must return an artifact binding the exact interface source")
-            if any(reference.subject != representation.ref for reference in materialized.evidence):
-                raise ValueError("interface evidence belongs to a different exact representation")
+            materialized = self._write(InterfaceWrite(plan=plan, obligation=obligation, source=source),
+                                       representation)
         detail = "Required interface prerequisites remain open" if children or missing else "Minimal interface written; B2 acceptance remains required"
         assessment = ProjectItem(id=f"{obligation.id}:interface-assessment", kind=ProjectItemKind.RESEARCH_NOTE,
             name=f"Lean interface for {representation.name}", origin=ProjectOrigin.GENERATED_LOCAL,
@@ -148,6 +139,17 @@ class InterfaceResolver:
                 *((("source", source),) if source is not None else ())))
         return ResolverResult(records=(assessment,), children=children,
                               evidence=materialized.evidence, detail=detail)
+
+    def _write(self, request: InterfaceWrite, representation: ProjectItem) -> DefinitionMaterialization:
+        """Bind the formal writer's receipt to this source and exact representation."""
+        materialized = DefinitionMaterialization.model_validate(self.write_interface(request).model_dump())
+        if not materialized.artifacts or not any(
+            artifact.digest == request.source_digest for artifact in materialized.artifacts
+        ):
+            raise ValueError("formal writer must return an artifact binding the exact interface source")
+        if any(reference.subject != representation.ref for reference in materialized.evidence):
+            raise ValueError("interface evidence belongs to a different exact representation")
+        return materialized
 
     @staticmethod
     def _closure(plan: InterfacePlan) -> tuple[tuple[InterfaceField, ...], tuple[str, ...]]:
@@ -201,3 +203,16 @@ class InterfaceResolver:
                 child = current
             pending.append(child)
         return tuple(pending)
+
+
+def _current_representation(snapshot: LedgerSnapshot, obligation: Obligation) -> ProjectItem:
+    """Require the current representation, obligation, context and scope together."""
+    representation = snapshot.get(obligation.item)
+    if (not isinstance(representation, ProjectItem) or representation.kind != ProjectItemKind.REPRESENTATION
+            or obligation.kind != ObligationKind.CONSTRUCT_INTERFACE
+            or obligation.context != representation.context
+            or snapshot.head(obligation.id) != obligation
+            or snapshot.head(representation.id) != representation
+            or snapshot.head(obligation.scope.id) != obligation.scope):
+        raise ValueError("interface materialization requires a current representation obligation")
+    return representation
