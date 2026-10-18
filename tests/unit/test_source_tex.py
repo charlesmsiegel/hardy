@@ -13,16 +13,19 @@ from hardy.foundation import process
 from hardy.literature.sources.adapters import ExtractionRefused
 from hardy.literature.sources.artifacts import ImportRequest
 from hardy.literature.sources.contracts import (
+    DerivedRepresentation,
     NativeSourceSpan,
     NodeKind,
     ObservationKind,
+    QualityProfile,
     RepresentationKind,
     SourceEdgeKind,
     SourceFormat,
 )
 from hardy.literature.sources.library import ManagedLibrary
 from hardy.literature.sources.locators import project, resolve_span
-from hardy.literature.sources.tex import pack_directory
+from hardy.literature.sources.tex import observe_tex, pack_directory
+from hardy.literature.statements import inventory
 
 MAIN = r"""\documentclass{article}
 \title{Fibers of the Prym map}
@@ -62,6 +65,41 @@ def imported(tmp_path, data, name="source.tar.gz"):
     lib = ManagedLibrary(tmp_path / "library")
     report = lib.import_source(ImportRequest(data=data, original_name=name))
     return lib, report
+
+
+@pytest.mark.parametrize(
+    ("environment", "inventory_kind", "structural_kind"),
+    (
+        ("fact", "fact", None),
+        ("assumption", "assumption", None),
+        ("hypothesis", "hypothesis", None),
+        ("remark", None, "remark"),
+        ("exercise", None, "exercise"),
+        ("construction", None, "construction"),
+        ("thm", "theorem", "theorem"),
+        ("definition*", "definition", "definition"),
+    ),
+)
+def test_inventory_and_navigation_keep_distinct_statement_policies(environment, inventory_kind, structural_kind):
+    text = (
+        r"\documentclass{article}\begin{document}"
+        + f"\\begin{{{environment}}}A source claim.\\end{{{environment}}}"
+        + r"\end{document}"
+    )
+    representation = DerivedRepresentation(
+        id="rep-text", artifact_sha256="a" * 64, kind=RepresentationKind.NORMALIZED_TEXT,
+        extractor="test", extractor_version="1", output_sha256="b" * 64,
+        derived_at="2026-09-11T00:00:00+00:00", quality=QualityProfile(status="ok"),
+        access="private_local", payload_files=("text.txt",),
+    )
+
+    inventoried = inventory({"main.tex": text})
+    observed = observe_tex(representation, text, representation.artifact_sha256)
+
+    assert [statement.kind for statement in inventoried] == ([] if inventory_kind is None else [inventory_kind])
+    assert [observation.value("kind") for observation in observed if observation.kind is ObservationKind.STATEMENT_START] == (
+        [] if structural_kind is None else [structural_kind]
+    )
 
 
 def test_tex_tree_import_preserves_file_digests_and_includes(tmp_path):

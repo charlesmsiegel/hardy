@@ -7,6 +7,10 @@ per producer so that a tree built from them can be audited against the exact
 evidence it used; they are not a tree and they assert nothing about
 mathematics. Text producers here work over a normalized-text representation
 and never guess at a theorem number the text does not print.
+
+Statement and reference labels are recognized in English, not translated.
+Proof markers additionally recognize `Beweis` and `Démonstration`; this is not
+general multilingual document understanding.
 """
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ import re
 from pathlib import Path
 
 from hardy.foundation.files import LayoutError, WriteGuard, read_text
+from hardy.literature.statement_kinds import REFERENCE_KINDS, STRUCTURAL_KINDS
 
 from .contracts import (
     DerivedRepresentation,
@@ -28,11 +33,10 @@ from .contracts import (
 PRODUCER = "hardy.observe.text"
 PRODUCER_VERSION = "1"
 
-STATEMENT_KINDS = ("theorem", "lemma", "proposition", "corollary", "definition", "claim", "conjecture",
-                   "example", "exercise", "remark", "construction", "solution")
+STATEMENT_KINDS = STRUCTURAL_KINDS
 LINE_START = r"(?:^|(?<=[\n\f]))"
 STATEMENT_START = re.compile(
-    LINE_START + r"(?P<kind>Theorem|Lemma|Proposition|Corollary|Definition|Claim|Conjecture|Example|Exercise|Remark|Construction|Solution)"
+    LINE_START + rf"(?P<kind>{'|'.join(kind.capitalize() for kind in STATEMENT_KINDS)})"
     r"(?:\s+(?P<number>[A-Z]?[0-9]+(?:\.[0-9]+)*))?\s*(?:\((?P<name>[^)]*)\))?\s*[.:]\s*",
     re.MULTILINE,
 )
@@ -44,7 +48,7 @@ HEADING = re.compile(
     re.MULTILINE,
 )
 REFERENCE = re.compile(
-    r"\b(?P<kind>Theorem|Lemma|Proposition|Corollary|Definition|Claim|Conjecture|Example|Exercise|Remark|Equation)"
+    rf"\b(?P<kind>{'|'.join(kind.capitalize() for kind in REFERENCE_KINDS)})"
     r"\s+(?P<number>[A-Z]?[0-9]+(?:\.[0-9]+)+|[0-9]+)\b",
 )
 EQUATION_NUMBER = re.compile(r"\((?P<number>[0-9]+(?:\.[0-9]+)*[a-z]?)\)\s*$", re.MULTILINE)

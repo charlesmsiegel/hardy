@@ -17,6 +17,7 @@ from typing import Annotated, Literal, Self
 from pydantic import StringConstraints, model_validator
 
 from hardy.foundation.values import FrozenModel, json_digest
+from hardy.literature.statement_kinds import STRUCTURAL_KINDS
 
 StableId = Annotated[str, StringConstraints(strict=True, pattern=r"\A[A-Za-z0-9][A-Za-z0-9_.:-]*\z")]
 Digest = Annotated[str, StringConstraints(strict=True, pattern=r"\A[0-9a-f]{64}\z")]
@@ -388,10 +389,7 @@ class NodeKind(str, Enum):
 
 
 CONTAINER_KINDS: frozenset[NodeKind] = frozenset({NodeKind.PART, NodeKind.CHAPTER, NodeKind.SECTION, NodeKind.SUBSECTION, NodeKind.APPENDIX})
-STATEMENT_KINDS: frozenset[NodeKind] = frozenset({
-    NodeKind.DEFINITION, NodeKind.THEOREM, NodeKind.LEMMA, NodeKind.PROPOSITION, NodeKind.COROLLARY, NodeKind.CLAIM,
-    NodeKind.CONJECTURE, NodeKind.CONSTRUCTION, NodeKind.EXAMPLE, NodeKind.EXERCISE, NodeKind.SOLUTION, NodeKind.REMARK,
-})
+STATEMENT_KINDS: frozenset[NodeKind] = frozenset(NodeKind(kind) for kind in STRUCTURAL_KINDS)
 
 
 class SourceNode(FrozenModel):

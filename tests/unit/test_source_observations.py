@@ -57,6 +57,13 @@ def test_unnumbered_statement_has_no_number_and_no_inference():
     assert start.value("number") == "" and start.value("number_origin") == "none"
 
 
+def test_english_statement_labels_and_multilingual_proof_markers_are_distinct():
+    found = observe_text(rep(), "Théorème 1. Un résultat.\nLemma 2. A result.\nBeweis.\nDémonstration.\n")
+
+    assert [observation.value("kind") for observation in kinds(found, ObservationKind.STATEMENT_START)] == ["lemma"]
+    assert [observation.value("label") for observation in kinds(found, ObservationKind.PROOF_START)] == ["Beweis", "Démonstration"]
+
+
 def test_proof_markers_and_headings_and_page_breaks():
     found = observe_text(rep(), TEXT)
     assert [o.value("label") for o in kinds(found, ObservationKind.PROOF_START)] == ["Proof", "Proof"]
