@@ -192,6 +192,7 @@ class SourceIdentity(FrozenModel):
 
     @model_validator(mode="after")
     def index_belongs_to_an_embedding_source(self) -> SourceIdentity:
+        """Require embedding provenance and refuse an index attached to another source kind."""
         if self.kind == "embedding" and self.index is None:
             raise ValueError("an embedding source must name the index that produced its ranking")
         if self.kind != "embedding" and self.index is not None:
@@ -605,6 +606,7 @@ class LoogleSource:
         return query
 
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
+        """Query the unpinned remote index; an empty reply is not an exhaustive search."""
         url = f"{self._endpoint}?{urlencode({'q': goal})}"
         try:
             body = self._fetch(url, self._timeout)
@@ -915,6 +917,7 @@ class PremiseRetriever:
         return max(0.0, self._limits.retrieval_seconds - self._spent)
 
     def rank(self, goal: str, limit: int = 10) -> PremiseRanking:
+        """Fuse admitted source calls into a ranking bound to their exact provenance."""
         if not 1 <= len(goal) <= MAX_GOAL_CHARACTERS:
             raise ValueError(f"a retrieval goal must be 1 to {MAX_GOAL_CHARACTERS} characters")
         query = search_query(goal)

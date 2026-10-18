@@ -483,6 +483,7 @@ class ImportCost(FrozenModel):
         return int(statistics.mean(observed[position] for position in middle))
 
     def estimate(self, *, calls: int, total_ms: int, workers: int = 1) -> WarmPoolEstimate:
+        """Estimate a hypothetical pool only when the import median is identifiable."""
         median = self.median_ms
         if median is None:
             raise ValueError(
