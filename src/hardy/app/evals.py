@@ -604,73 +604,84 @@ def run_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_corpus(args: argparse.Namespace) -> int:
+    from hardy.corpus.catalog import check_issues, release_issues
+
+    issues = check_issues(args.corpus)
+    if getattr(args, "since", None) is not None:
+        issues.extend(release_issues(args.corpus, args.since.read_text(encoding="utf-8")))
+    if getattr(args, "since_registry", None) is not None:
+        from hardy.corpus.catalog import CorpusError, load_tombstones, registry_issues
+
+        # Both sides are gathered, not raised: CI always passes this
+        # option, so a malformed registry -- the very case the check
+        # exists to report -- would otherwise abort the command before
+        # it printed anything, including the objection about it.
+        try:
+            prior = json.loads(args.since_registry.read_text(encoding="utf-8"))["issued"]
+            if not isinstance(prior, dict):
+                raise CorpusError("the previous registry's 'issued' is not a mapping")
+            issues.extend(registry_issues(load_tombstones(args.corpus), prior))
+        except (CorpusError, OSError, ValueError, KeyError, TypeError) as error:
+            issues.append(f"tombstones.json: {error}")
+    for issue in issues:
+        print(issue, file=sys.stderr)
+    return 1 if issues else 0
+
+
+def _release_corpus(args: argparse.Namespace) -> int:
+    from datetime import date
+
+    from hardy.corpus.catalog import CorpusError, release
+
+    try:
+        issues = release(args.corpus, args.version, args.note, today=date.today().isoformat())
+    except CorpusError as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    for issue in issues:
+        print(issue, file=sys.stderr)
+    print(f"corpus {args.version} written to {args.corpus / 'CHANGELOG.md'}")
+    return 1 if issues else 0
+
+
+def _serve_corpus(args: argparse.Namespace) -> int:
+    from hardy.app.corpus_viewer import serve
+
+    serve(args.corpus, host=args.host, port=args.port, baseline=args.baseline)
+    return 0
+
+
+def _run_corpus(args: argparse.Namespace) -> int:
+    actions = {"check": _check_corpus, "release": _release_corpus, "serve": _serve_corpus}
+    action = actions.get(args.corpus_verb)
+    if action is not None:
+        return action(args)
+    from hardy.corpus.catalog import report
+
+    for line in report(args.corpus):
+        print(line)
+    return 0
+
+
 def main(args: argparse.Namespace, config: Any) -> int:
-    if args.evals_command == "import-benchmark":
-        return run_import_benchmark(args)
-    if args.evals_command == "history":
-        return run_history(args)
-    if args.evals_command == "compare":
-        return run_compare(args)
-    if args.evals_command == "baseline":
-        return run_baseline(args, config)
-    if args.evals_command == "run":
-        return run_set_command(args, config)
-    if args.evals_command == "corpus":
-        from hardy.corpus.catalog import check_issues, report
-        if args.corpus_verb == "check":
-            from hardy.corpus.catalog import release_issues
-
-            issues = check_issues(args.corpus)
-            if getattr(args, "since", None) is not None:
-                issues.extend(release_issues(args.corpus, args.since.read_text(encoding="utf-8")))
-            if getattr(args, "since_registry", None) is not None:
-                from hardy.corpus.catalog import CorpusError, load_tombstones, registry_issues
-
-                # Both sides are gathered, not raised: CI always passes this
-                # option, so a malformed registry -- the very case the check
-                # exists to report -- would otherwise abort the command before
-                # it printed anything, including the objection about it.
-                try:
-                    prior = json.loads(args.since_registry.read_text(encoding="utf-8"))["issued"]
-                    if not isinstance(prior, dict):
-                        raise CorpusError("the previous registry's 'issued' is not a mapping")
-                    issues.extend(registry_issues(load_tombstones(args.corpus), prior))
-                except (CorpusError, OSError, ValueError, KeyError, TypeError) as error:
-                    issues.append(f"tombstones.json: {error}")
-            for issue in issues:
-                print(issue, file=sys.stderr)
-            return 1 if issues else 0
-        if args.corpus_verb == "release":
-            from datetime import date
-
-            from hardy.corpus.catalog import CorpusError, release
-
-            try:
-                issues = release(args.corpus, args.version, args.note, today=date.today().isoformat())
-            except CorpusError as error:
-                print(f"Refused: {error}", file=sys.stderr)
-                return 2
-            for issue in issues:
-                print(issue, file=sys.stderr)
-            print(f"corpus {args.version} written to {args.corpus / 'CHANGELOG.md'}")
-            return 1 if issues else 0
-        if args.corpus_verb == "serve":
-            from hardy.app.corpus_viewer import serve
-
-            serve(args.corpus, host=args.host, port=args.port, baseline=args.baseline)
-            return 0
-        for line in report(args.corpus):
-            print(line)
-        return 0
-    if args.evals_command == "check":
-        return check_command(args)
-    if args.evals_command == "todo":
-        return run_todo(args, config)
-    if args.evals_command == "pool":
-        return run_pool(args)
-    if args.evals_command == "summary":
-        return run_summary(args)
-    raise AssertionError(args.evals_command)
+    """Dispatch command adapters without mixing their validation and effects."""
+    configured = {"baseline": run_baseline, "run": run_set_command, "todo": run_todo}
+    if args.evals_command in configured:
+        return configured[args.evals_command](args, config)
+    actions = {
+        "import-benchmark": run_import_benchmark,
+        "history": run_history,
+        "compare": run_compare,
+        "corpus": _run_corpus,
+        "check": check_command,
+        "pool": run_pool,
+        "summary": run_summary,
+    }
+    action = actions.get(args.evals_command)
+    if action is None:
+        raise AssertionError(args.evals_command)
+    return action(args)
 
 
 def run_import_benchmark(args: argparse.Namespace) -> int:
