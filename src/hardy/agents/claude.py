@@ -852,13 +852,14 @@ class ClaudeAgentRuntime:
                 # cancellation instead of a full turn the record calls stopped.
                 # A cancellation arriving *after* this line has a client, so it
                 # interrupts by the ordinary path.
-                if not self._cancelled:
-                    await client.query(text)
-                    async for message in client.receive_response():
-                        if threading.current_thread() is not self._worker:
-                            return
-                        for event in self._note(message, spoken):
-                            outbox.put(event)
+                if self._cancelled:
+                    return
+                await client.query(text)
+                async for message in client.receive_response():
+                    if threading.current_thread() is not self._worker:
+                        return
+                    for event in self._note(message, spoken):
+                        outbox.put(event)
             finally:
                 with self._state_lock:
                     if self._client is client:
