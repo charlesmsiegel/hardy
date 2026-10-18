@@ -634,34 +634,55 @@ def _detach_after(values: Mapping[str, Any]) -> float:
     return seconds
 
 
-def load(
-    path: Path | None = None,
-    *,
-    root: Path | None = None,
-    project: str | None = None,
-    choose: Callable[[list[str]], str | None] | None = None,
-    **overrides: Any,
-) -> Config:
-    """Resolve configuration from both layers, the environment, and CLI flags.
+@dataclass(frozen=True)
+class _ConfigValues:
+    """Winning settings and the provenance needed to interpret their text."""
 
-    Two layers, not one. The global file holds settings that belong to the
-    user; the project file, at `<root>/.hardy/config.toml`, holds settings that
-    belong to this checkout -- above all which problem is active. `HARDY_CONFIG`
-    selects the global file *only*: letting it win over everything, as it did
-    when there was one file, would mean a wrapper pointing it elsewhere
-    silently opened and wrote the wrong problem's record.
+    values: Mapping[str, Any]
+    origins: Mapping[str, tuple[str, bool]]
 
-    Precedence: global file, then project file, then environment, then flags.
-    """
-    # The migration runs before the default path is read, and only when the
-    # caller named no file of its own: an explicit --config or HARDY_CONFIG is
-    # a deliberate choice about which file to use, not an upgrade to perform.
-    # Without this the relocation would be implemented, unit-tested, and never
-    # reached -- an upgrading user's model and toolchain settings would be
-    # silently ignored.
-    if path is None and not os.environ.get("HARDY_CONFIG"):
-        migrate_global()
-    path = path or default_config_path()
+    def checked(self, key: str, value: str, *, element: int | None = None) -> str:
+        """`value` for `key`, refused if it holds a control character."""
+        where, from_toml = self.origins.get(key, (key, False))
+        if element is not None:
+            where = f"{where} (argument {element + 1})"
+        return _reject_control_characters(where, value, from_toml=from_toml)
+
+    def text(self, key: str, default: str) -> str:
+        return str(self.values.get(key) or default)
+
+    def location(self, key: str) -> Path | None:
+        value = self.values.get(key)
+        if not value:
+            return None
+        return Path(self.checked(key, str(value))).expanduser()
+
+    def command(self, key: str, default: str) -> tuple[str, ...]:
+        """Argv for a command setting: a TOML list verbatim, or checked and split text.
+
+        An absent setting takes the default. One that is present but empty --
+        `[]`, `[""]`, or a blank value given on the command line -- is refused
+        by `split_command` rather than quietly defaulted: it was written, so it
+        was meant. (A blank value in a file never gets here: `read_file` reads
+        it as unset.)
+        """
+        if key not in self.values:
+            return split_command(default, setting=key)
+        value = self.values[key]
+        if isinstance(value, list):
+            value = [
+                self.checked(key, item, element=index) if isinstance(item, str) else item
+                for index, item in enumerate(value)
+            ]
+        else:
+            value = self.checked(key, str(value))
+        return split_command(value, setting=self.origins.get(key, (key, False))[0])
+
+
+def _read_layers(
+    path: Path, root: Path | None, overrides: Mapping[str, Any]
+) -> tuple[Path, _ConfigValues]:
+    """Resolve source authority before interpreting the resulting settings."""
     values: dict[str, Any] = read_file(path)
     # Where each value came from, as a phrase for a refusal to name, and
     # whether TOML parsed it (and so could have turned a backslash into a
@@ -716,43 +737,39 @@ def load(
         if value is not None:
             values[key] = value
             origins[key] = (f"{key} given on the command line", False)
+    return resolved_root, _ConfigValues(values, origins)
 
-    def checked(key: str, value: str, *, element: int | None = None) -> str:
-        """`value` for `key`, refused if it holds a control character."""
-        where, from_toml = origins.get(key, (key, False))
-        if element is not None:
-            where = f"{where} (argument {element + 1})"
-        return _reject_control_characters(where, value, from_toml=from_toml)
 
-    def text(key: str, default: str) -> str:
-        return str(values.get(key) or default)
+def load(
+    path: Path | None = None,
+    *,
+    root: Path | None = None,
+    project: str | None = None,
+    choose: Callable[[list[str]], str | None] | None = None,
+    **overrides: Any,
+) -> Config:
+    """Resolve configuration from both layers, the environment, and CLI flags.
 
-    def location(key: str) -> Path | None:
-        value = values.get(key)
-        if not value:
-            return None
-        return Path(checked(key, str(value))).expanduser()
+    Two layers, not one. The global file holds settings that belong to the
+    user; the project file, at `<root>/.hardy/config.toml`, holds settings that
+    belong to this checkout -- above all which problem is active. `HARDY_CONFIG`
+    selects the global file *only*: letting it win over everything, as it did
+    when there was one file, would mean a wrapper pointing it elsewhere
+    silently opened and wrote the wrong problem's record.
 
-    def command(key: str, default: str) -> tuple[str, ...]:
-        """Argv for a command setting: a TOML list verbatim, or checked and split text.
-
-        An absent setting takes the default. One that is present but empty --
-        `[]`, `[""]`, or a blank value given on the command line -- is refused
-        by `split_command` rather than quietly defaulted: it was written, so it
-        was meant. (A blank value in a file never gets here: `read_file` reads
-        it as unset.)
-        """
-        if key not in values:
-            return split_command(default, setting=key)
-        value = values[key]
-        if isinstance(value, list):
-            value = [
-                checked(key, item, element=index) if isinstance(item, str) else item
-                for index, item in enumerate(value)
-            ]
-        else:
-            value = checked(key, str(value))
-        return split_command(value, setting=origins.get(key, (key, False))[0])
+    Precedence: global file, then project file, then environment, then flags.
+    """
+    # The migration runs before the default path is read, and only when the
+    # caller named no file of its own: an explicit --config or HARDY_CONFIG is
+    # a deliberate choice about which file to use, not an upgrade to perform.
+    # Without this the relocation would be implemented, unit-tested, and never
+    # reached -- an upgrading user's model and toolchain settings would be
+    # silently ignored.
+    if path is None and not os.environ.get("HARDY_CONFIG"):
+        migrate_global()
+    path = path or default_config_path()
+    resolved_root, settings = _read_layers(path, root, overrides)
+    values = settings.values
 
     lean_timeout = _lean_timeout(values)
     context_window = _context_window(values)
@@ -763,7 +780,7 @@ def load(
 
     compute_detach_seconds = _detach_after(values)
 
-    backend = text("backend", DEFAULT_BACKEND)
+    backend = settings.text("backend", DEFAULT_BACKEND)
     adapter = backends.find(backend)
     if adapter is None or not adapter.interactive:
         raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
@@ -771,45 +788,45 @@ def load(
         raise ValueError(f"the {backend} backend requires an explicit model identity")
     provider_budget = None
     if values.get("provider_budget"):
-        budget_path = Path(checked("provider_budget", str(values["provider_budget"]))).expanduser()
+        budget_path = Path(settings.checked("provider_budget", str(values["provider_budget"]))).expanduser()
         if not budget_path.is_absolute():
             budget_path = path.parent / budget_path
         provider_budget = SpendPolicy.model_validate_json(budget_path.read_text(encoding="utf-8"))
         if not adapter.provider_budget:
             raise ValueError("provider budgets require the harness-owned API backend")
-    cas_backend = text("cas_backend", DEFAULT_CAS_BACKEND)
+    cas_backend = settings.text("cas_backend", DEFAULT_CAS_BACKEND)
     # Rejected here rather than at first use: an unknown backend is a typo in a
     # config file, and the place to say so is where the file is read.
     if cas_backend not in CAS_BACKENDS:
         raise ValueError(f"cas_backend must be one of {list(CAS_BACKENDS)}, not {cas_backend!r}")
 
-    lake = location("lake") or Path(DEFAULT_LAKE)
+    lake = settings.location("lake") or Path(DEFAULT_LAKE)
     return Config(
         model=str(values["model"]) if values.get("model") else DEFAULT_MODEL,
         lean_command=(
-            command("lean_command", DEFAULT_LEAN_COMMAND)
+            settings.command("lean_command", DEFAULT_LEAN_COMMAND)
             if "lean_command" in values else (str(lake), "env", "lean")
         ),
-        lean_project=location("lean_project"),
+        lean_project=settings.location("lean_project"),
         lean_timeout=lean_timeout,
-        latex_command=command("latex_command", DEFAULT_LATEX_COMMAND),
+        latex_command=settings.command("latex_command", DEFAULT_LATEX_COMMAND),
         root=resolved_root,
         # `choose` reaches here rather than the caller asking first because
         # the root the question is about is resolved in this function, from
         # three layers the caller does not otherwise take apart.
         project=active_project(resolved_root, project, values, choose),
-        runs_root=location("runs_root") or Path(DEFAULT_RUNS_ROOT),
+        runs_root=settings.location("runs_root") or Path(DEFAULT_RUNS_ROOT),
         faithfulness_model=(
             str(values["faithfulness_model"]) if values.get("faithfulness_model") else None
         ),
         lake=lake,
-        elan=location("elan") or Path(DEFAULT_ELAN),
-        tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),
-        tectonic_bundle=text("tectonic_bundle", DEFAULT_TECTONIC_BUNDLE),
-        tectonic_bundle_sha256=text("tectonic_bundle_sha256", DEFAULT_TECTONIC_BUNDLE_SHA256),
+        elan=settings.location("elan") or Path(DEFAULT_ELAN),
+        tectonic=settings.location("tectonic") or Path(DEFAULT_TECTONIC),
+        tectonic_bundle=settings.text("tectonic_bundle", DEFAULT_TECTONIC_BUNDLE),
+        tectonic_bundle_sha256=settings.text("tectonic_bundle_sha256", DEFAULT_TECTONIC_BUNDLE_SHA256),
         backend=backend,
         cas_backend=cas_backend,
-        cas_command=location("cas_command"),
+        cas_command=settings.location("cas_command"),
         project_context=_flag(values, "project_context", True),
         context_window=context_window,
         delegation_workers=delegation_workers,
