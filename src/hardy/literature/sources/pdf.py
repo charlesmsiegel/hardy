@@ -25,7 +25,12 @@ from typing import Any
 
 from hardy.foundation.values import json_digest
 
-from .adapters import ExtractionBudget, ExtractionRefused, ExtractionResult
+from .adapter_contracts import (
+    AdapterUnavailable,
+    ExtractionBudget,
+    ExtractionRefused,
+    ExtractionResult,
+)
 from .contracts import (
     DerivedRepresentation,
     Diagnostic,
@@ -51,8 +56,6 @@ def _pypdf():
     try:
         import pypdf
     except ImportError as error:  # pragma: no cover - exercised through a monkeypatched import in tests
-        from .adapters import AdapterUnavailable
-
         raise AdapterUnavailable("pypdf is not installed; born-digital PDF extraction was not run") from error
     return pypdf
 

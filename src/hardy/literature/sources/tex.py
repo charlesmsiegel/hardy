@@ -30,7 +30,7 @@ from hardy.literature import archives
 from hardy.literature.statement_kinds import ENVIRONMENT_ALIASES, STRUCTURAL_KINDS
 from hardy.literature.statements import AssumeError, root_of
 
-from .adapters import ExtractionBudget, ExtractionRefused, ExtractionResult
+from .adapter_contracts import ExtractionBudget, ExtractionRefused, ExtractionResult
 from .contracts import (
     DerivedRepresentation,
     Diagnostic,

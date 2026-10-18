@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
-from .adapters import ExtractionBudget, ExtractionRefused, ExtractionResult
+from .adapter_contracts import ExtractionBudget, ExtractionRefused, ExtractionResult
 from .contracts import (
     DerivedRepresentation,
     Diagnostic,
