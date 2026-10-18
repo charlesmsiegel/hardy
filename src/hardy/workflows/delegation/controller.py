@@ -219,27 +219,9 @@ class DelegationController:
                              if e.delegation_id == delegation.id and e.kind == "delegation.recovered")
                 self._after_terminal(delegation.id, event)
             tree = self.tree()
-            others = self._foreign_live(tree)
-            for delegation in tree.delegations.values():
-                # A cell exposed by its creation event but never started: it
-                # runs no worker, so nothing else would ever start it -- unless
-                # a live session made it, and is about to.
-                if (delegation.state is DelegationState.QUEUED and delegation.spawn.can_spawn
-                        and delegation.id not in others):
-                    self.store.append(delegation.id, "delegation.started", {"interior": True})
+            self._start_unowned_cells(tree)
             tree = self.tree()
-            ledger = LeaseLedger(tree)
-            derived = {item.source_event for item in self._inbox.items()}
-            for delegation in tree.delegations.values():
-                # A worker whose end was journaled but whose lease the dead
-                # process never returned would charge its parent forever.
-                if delegation.terminal and delegation.parent_id is not None and not ledger.released(delegation.id):
-                    self.store.release(delegation.id)
-                    # And its result never reached anyone: route it now.
-                    terminal = next((e for e in reversed(tree.events)
-                                     if e.delegation_id == delegation.id and e.kind in _TERMINAL_EVENT.values()), None)
-                    if terminal is not None and terminal.sequence not in derived:
-                        self._route(delegation.id, terminal)
+            self._recover_terminal_leases(tree)
             tree = self.tree()
             if ROOT_ID in tree.delegations:
                 # This session's ceilings, not the last one's: the root follows
@@ -249,34 +231,64 @@ class DelegationController:
                 # session's epoch begins, and stays the last session's.
                 self._ensure_root(tree.get(ROOT_ID).spec.scope)
                 tree = self.tree()
-            ledger = LeaseLedger(tree)
-            # Queued work another live session made is that session's to run:
-            # relaunching it here would start the same worker twice, and
-            # retiring it would cancel work this session does not own.
-            others = self._foreign_live(tree)
-            queued = [d for d in tree.delegations.values()
-                      if d.state is DelegationState.QUEUED and d.parent_id is not None
-                      and d.id not in self._pending and d.id not in self._handles and d.id not in others]
-            # Ceilings that shrank: first whatever no longer fits its parent's
-            # whole lease, then the rest measured against what remains, in turn.
-            for delegation in queued:
-                if not ledger.reserved(delegation.id).fits_within(ledger.reserved(delegation.parent_id)):
-                    self._retire_queued(delegation.id, "reservation exceeds the current ceiling")
-            tree = self.tree()
-            ledger = LeaseLedger(tree)
-            for delegation in queued:
-                delegation = tree.get(delegation.id)
-                if delegation.state is DelegationState.QUEUED:
-                    reserved = ledger.reserved(delegation.id)
-                    if not reserved.fits_within(ledger.allocatable_excluding(delegation.parent_id, delegation.id)):
-                        self._retire_queued(delegation.id, "reservation exceeds the current ceiling")
-                        ledger = LeaseLedger(self.tree())
-                        continue
-                    launch = self._relaunch(delegation, reserved)
-                    if launch is not None:
-                        self._pending[delegation.id] = launch
+            self._recover_pending(tree)
             self._dispatch()
             return recovered
+
+    def _start_unowned_cells(self, tree: DelegationTree) -> None:
+        """A queued interior node has no worker to start it, unless another live session owns it."""
+        others = self._foreign_live(tree)
+        for delegation in tree.delegations.values():
+            # A cell exposed by its creation event but never started: it
+            # runs no worker, so nothing else would ever start it -- unless
+            # a live session made it, and is about to.
+            if (delegation.state is DelegationState.QUEUED and delegation.spawn.can_spawn
+                    and delegation.id not in others):
+                self.store.append(delegation.id, "delegation.started", {"interior": True})
+
+    def _recover_terminal_leases(self, tree: DelegationTree) -> None:
+        """Return ended workers' reservations and recover any missing terminal attention."""
+        ledger = LeaseLedger(tree)
+        derived = {item.source_event for item in self._inbox.items()}
+        for delegation in tree.delegations.values():
+            # A worker whose end was journaled but whose lease the dead
+            # process never returned would charge its parent forever.
+            if delegation.terminal and delegation.parent_id is not None and not ledger.released(delegation.id):
+                self.store.release(delegation.id)
+                # And its result never reached anyone: route it now.
+                terminal = next((e for e in reversed(tree.events)
+                                 if e.delegation_id == delegation.id and e.kind in _TERMINAL_EVENT.values()), None)
+                if terminal is not None and terminal.sequence not in derived:
+                    self._route(delegation.id, terminal)
+
+    def _recover_pending(self, tree: DelegationTree) -> None:
+        """Rebuild only unowned queued launches that fit the current ancestor ceilings."""
+        ledger = LeaseLedger(tree)
+        # Queued work another live session made is that session's to run:
+        # relaunching it here would start the same worker twice, and
+        # retiring it would cancel work this session does not own.
+        others = self._foreign_live(tree)
+        queued = [d for d in tree.delegations.values()
+                  if d.state is DelegationState.QUEUED and d.parent_id is not None
+                  and d.id not in self._pending and d.id not in self._handles and d.id not in others]
+        # Ceilings that shrank: first whatever no longer fits its parent's
+        # whole lease, then the rest measured against what remains, in turn.
+        for delegation in queued:
+            if not ledger.reserved(delegation.id).fits_within(ledger.reserved(delegation.parent_id)):
+                self._retire_queued(delegation.id, "reservation exceeds the current ceiling")
+        tree = self.tree()
+        ledger = LeaseLedger(tree)
+        for delegation in queued:
+            delegation = tree.get(delegation.id)
+            if delegation.state is DelegationState.QUEUED:
+                reserved = ledger.reserved(delegation.id)
+                if not reserved.fits_within(ledger.allocatable_excluding(delegation.parent_id, delegation.id)):
+                    self._retire_queued(delegation.id, "reservation exceeds the current ceiling")
+                    ledger = LeaseLedger(self.tree())
+                    continue
+                launch = self._relaunch(delegation, reserved)
+                if launch is not None:
+                    self._pending[delegation.id] = launch
 
     def _retire_queued(self, id: str, reason: str) -> None:
         """Queued work whose reservation no longer exists to run on: cancelled and released."""
@@ -730,18 +742,9 @@ class DelegationController:
             if free <= 0 or not self._pending or self._closed:
                 return
             tree = self.tree()
-            # A launch held for work that has since ended, or that another
-            # session started, is nobody's to run any more.
-            for id in [id for id in self._pending
-                       if (node := tree.delegations.get(id)) is None or node.terminal
-                       or (node.owner is not None and node.owner != self._owner.id)]:
-                self._pending.pop(id, None)
+            self._discard_stale_launches(tree)
             ledger = LeaseLedger(tree)
-            taken: dict[str, int] = {}
-            for id in self._handles:
-                node = tree.delegations.get(id)
-                if node is not None and node.state is DelegationState.QUEUED and node.parent_id is not None:
-                    taken[node.parent_id] = taken.get(node.parent_id, 0) + node.spec.concurrency.slots
+            taken = self._submitted_slots(tree)
             for chosen in self._scheduler().choose(free, candidates=set(self._pending), submitted=set(self._handles)):
                 launch = self._pending.get(chosen.id)
                 if launch is None:
@@ -750,28 +753,54 @@ class DelegationController:
                 parent = chosen.parent_id or ROOT_ID
                 if ledger.slots_available(parent) - taken.get(parent, 0) < wanted:
                     continue
-                pushed = FindingLedger(self.store).pending_pushes(chosen.id)
-                if pushed:
-                    # The launch is the recipient's first provider boundary.
-                    launch = dataclasses.replace(launch, prompt=f"{render_pushes(pushed)}\n\n{launch.prompt}")
-                try:
-                    handle = self.executor.submit(
-                        WorkerJob(chosen.id, lambda token, launch=launch: self._run(launch, token)))
-                except RuntimeError:
-                    # The executor is gone; the work stays queued for a restart to relaunch.
+                if not self._submit_launch(chosen, launch, taken):
                     return
-                # Submission transfers ownership even if a later receipt write fails.
-                self._pending.pop(chosen.id, None)
-                self._handles[chosen.id] = handle
-                taken[parent] = taken.get(parent, 0) + wanted
-                handle.add_done_callback(self._settle)
-                if pushed:
-                    try:
-                        FindingLedger(self.store).acknowledge_pushes(chosen.id, tuple(f.id for f in pushed))
-                    except OSError:
-                        # The accepted worker keeps its seats and settlement callback.
-                        # Unreceipted findings remain pending for a later boundary.
-                        logging.getLogger(__name__).exception("Push receipt write failed for %s", chosen.id)
+
+    def _discard_stale_launches(self, tree: DelegationTree) -> None:
+        """A retired or foreign-owned launch can no longer consume this controller's executor."""
+        # A launch held for work that has since ended, or that another
+        # session started, is nobody's to run any more.
+        for id in [id for id in self._pending
+                   if (node := tree.delegations.get(id)) is None or node.terminal
+                   or (node.owner is not None and node.owner != self._owner.id)]:
+            self._pending.pop(id, None)
+
+    def _submitted_slots(self, tree: DelegationTree) -> dict[str, int]:
+        """Count queued submissions whose start event has not yet claimed their parent seats."""
+        taken: dict[str, int] = {}
+        for id in self._handles:
+            node = tree.delegations.get(id)
+            if node is not None and node.state is DelegationState.QUEUED and node.parent_id is not None:
+                taken[node.parent_id] = taken.get(node.parent_id, 0) + node.spec.concurrency.slots
+        return taken
+
+    def _submit_launch(self, chosen: Delegation, launch: WorkerLaunch, taken: dict[str, int]) -> bool:
+        """Transfer a queued launch to the executor before acknowledging pushed findings."""
+        parent = chosen.parent_id or ROOT_ID
+        wanted = chosen.spec.concurrency.slots
+        pushed = FindingLedger(self.store).pending_pushes(chosen.id)
+        if pushed:
+            # The launch is the recipient's first provider boundary.
+            launch = dataclasses.replace(launch, prompt=f"{render_pushes(pushed)}\n\n{launch.prompt}")
+        try:
+            handle = self.executor.submit(
+                WorkerJob(chosen.id, lambda token, launch=launch: self._run(launch, token)))
+        except RuntimeError:
+            # The executor is gone; the work stays queued for a restart to relaunch.
+            return False
+        # Submission transfers ownership even if a later receipt write fails.
+        self._pending.pop(chosen.id, None)
+        self._handles[chosen.id] = handle
+        taken[parent] = taken.get(parent, 0) + wanted
+        handle.add_done_callback(self._settle)
+        if pushed:
+            try:
+                FindingLedger(self.store).acknowledge_pushes(chosen.id, tuple(f.id for f in pushed))
+            except OSError:
+                # The accepted worker keeps its seats and settlement callback.
+                # Unreceipted findings remain pending for a later boundary.
+                logging.getLogger(__name__).exception("Push receipt write failed for %s", chosen.id)
+        return True
 
     def pin(self, id: str, kind: PinKind, *, by: str, value: int | None = None) -> Pin:
         with self._lock:
