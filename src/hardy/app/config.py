@@ -6,7 +6,7 @@ import re
 import shlex
 import sys
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -574,6 +574,68 @@ def _whole_workers(raw: Any) -> int:
     raise ValueError(f"delegation_workers must be a whole number of workers, not {raw!r}")
 
 
+def _lean_timeout(values: Mapping[str, Any]) -> float:
+    try:
+        timeout = float(values.get("lean_timeout", DEFAULT_LEAN_TIMEOUT))
+    except OverflowError:
+        raise ValueError(
+            f"lean_timeout must be a finite, positive number of seconds, not {values.get('lean_timeout')!r}"
+        ) from None
+    except (TypeError, ValueError):
+        raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
+    if isinstance(values.get("lean_timeout"), bool) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(
+            f"lean_timeout must be a finite, positive number of seconds, not {values.get('lean_timeout')!r}"
+        )
+    return timeout
+
+
+def _flag(values: Mapping[str, Any], key: str, default: bool) -> bool:
+    """A boolean setting, spelled the way each layer can spell it.
+
+    TOML has real booleans; an environment variable and a flag do not, so
+    `HARDY_PROJECT_CONTEXT=0` has to mean what `project_context = false`
+    means. A value that is neither is refused here rather than quietly
+    read as true -- a user who wrote `off` and meant it should not have to
+    discover from a transcript that their setting did nothing.
+    """
+    value = values.get(key, default)
+    if isinstance(value, bool):
+        return value
+    spelling = str(value).strip().lower()
+    if spelling in {"1", "true", "yes", "on"}:
+        return True
+    if spelling in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{key} must be true or false, not {value!r}")
+
+
+def _context_window(values: Mapping[str, Any]) -> int:
+    try:
+        window = int(values.get("context_window", DEFAULT_CONTEXT_WINDOW))
+    except (TypeError, ValueError):
+        raise ValueError(f"context_window must be a number of tokens, not {values['context_window']!r}") from None
+    # The floor is the transport's output cap, not zero: the reserve is never
+    # smaller than a reply. A window at or below it leaves no request space.
+    if window <= MINIMUM_CONTEXT_WINDOW:
+        raise ValueError(
+            f"context_window must leave room for a reply: more than "
+            f"{MINIMUM_CONTEXT_WINDOW} tokens, not {window}"
+        )
+    return window
+
+
+def _detach_after(values: Mapping[str, Any]) -> float:
+    raw = values.get("compute_detach_seconds", DEFAULT_COMPUTE_DETACH_SECONDS)
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"compute_detach_seconds must be a number of seconds, not {raw!r}") from None
+    if seconds != seconds or seconds < 0 or seconds == float("inf"):
+        raise ValueError(f"compute_detach_seconds must be zero or a finite number of seconds, not {raw!r}")
+    return seconds
+
+
 def load(
     path: Path | None = None,
     *,
@@ -694,70 +756,14 @@ def load(
             value = checked(key, str(value))
         return split_command(value, setting=origins.get(key, (key, False))[0])
 
-    try:
-        lean_timeout = float(values.get("lean_timeout", DEFAULT_LEAN_TIMEOUT))
-    except OverflowError:
-        raise ValueError(
-            f"lean_timeout must be a finite, positive number of seconds, not {values.get('lean_timeout')!r}"
-        ) from None
-    except (TypeError, ValueError):
-        raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
-
-    if isinstance(values.get("lean_timeout"), bool) or not math.isfinite(lean_timeout) or lean_timeout <= 0:
-        raise ValueError(
-            f"lean_timeout must be a finite, positive number of seconds, not {values.get('lean_timeout')!r}"
-        )
-
-    def flag(key: str, default: bool) -> bool:
-        """A boolean setting, spelled the way each layer can spell it.
-
-        TOML has real booleans; an environment variable and a flag do not, so
-        `HARDY_PROJECT_CONTEXT=0` has to mean what `project_context = false`
-        means. A value that is neither is refused here rather than quietly
-        read as true -- a user who wrote `off` and meant it should not have to
-        discover from a transcript that their setting did nothing.
-        """
-        value = values.get(key, default)
-        if isinstance(value, bool):
-            return value
-        spelling = str(value).strip().lower()
-        if spelling in {"1", "true", "yes", "on"}:
-            return True
-        if spelling in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"{key} must be true or false, not {value!r}")
-
-    try:
-        context_window = int(values.get("context_window", DEFAULT_CONTEXT_WINDOW))
-    except (TypeError, ValueError):
-        raise ValueError(f"context_window must be a number of tokens, not {values['context_window']!r}") from None
-    # A window no request could fit inside is a typo, not a preference, and a
-    # compactor told to plan against it would cut every conversation to
-    # nothing while still overflowing. Refused where the file is read.
-    #
-    # The floor is the transport's output cap rather than zero: the reserve is
-    # never smaller than what the model may write, so a window at or below the
-    # cap leaves nothing at all for the request -- the planner would report
-    # zero available space and the loop would send the request anyway. A
-    # configuration that cannot hold an answer is not a small window, it is a
-    # wrong one, and the place to say so is where the file is read.
-    if context_window <= MINIMUM_CONTEXT_WINDOW:
-        raise ValueError(
-            f"context_window must leave room for a reply: more than "
-            f"{MINIMUM_CONTEXT_WINDOW} tokens, not {context_window}"
-        )
+    lean_timeout = _lean_timeout(values)
+    context_window = _context_window(values)
 
     delegation_workers = _whole_workers(values.get("delegation_workers", DEFAULT_DELEGATION_WORKERS))
     if delegation_workers < 1:
         raise ValueError(f"delegation_workers must be at least 1, not {delegation_workers}")
 
-    raw_detach = values.get("compute_detach_seconds", DEFAULT_COMPUTE_DETACH_SECONDS)
-    try:
-        compute_detach_seconds = float(raw_detach)
-    except (TypeError, ValueError):
-        raise ValueError(f"compute_detach_seconds must be a number of seconds, not {raw_detach!r}") from None
-    if compute_detach_seconds != compute_detach_seconds or compute_detach_seconds < 0 or compute_detach_seconds == float("inf"):
-        raise ValueError(f"compute_detach_seconds must be zero or a finite number of seconds, not {raw_detach!r}")
+    compute_detach_seconds = _detach_after(values)
 
     backend = text("backend", DEFAULT_BACKEND)
     if backend not in BACKENDS:
@@ -805,7 +811,7 @@ def load(
         backend=backend,
         cas_backend=cas_backend,
         cas_command=location("cas_command"),
-        project_context=flag("project_context", True),
+        project_context=_flag(values, "project_context", True),
         context_window=context_window,
         delegation_workers=delegation_workers,
         compute_detach_seconds=compute_detach_seconds,
