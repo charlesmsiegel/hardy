@@ -202,6 +202,35 @@ def test_as_dict_is_json_plain():
     }
 
 
+@pytest.mark.parametrize(
+    ("status", "description"),
+    (
+        ("clean", "no declaration was audited"),
+        ("modulo", "no declaration was audited"),
+        ("rejected", "no declaration was audited"),
+        ("open", "open -- [] rest on a hole []"),
+        ("future-status", "no declaration was audited"),
+        ("", "no declaration was audited"),
+    ),
+)
+def test_legacy_string_verdicts_keep_their_record_and_description(status, description):
+    """The public dataclass historically accepts raw status words, including unknown ones."""
+    verdict = Verdict(status, (), (), (), ())
+
+    record = verdict.as_dict()
+
+    assert record == {
+        "status": status,
+        "declarations": [],
+        "forbidden": [],
+        "unapproved": [],
+        "assumed": [],
+    }
+    assert type(record["status"]) is str
+    assert json.loads(json.dumps(record)) == record
+    assert describe(verdict) == description
+
+
 def test_unestablished_is_json_plain_and_says_why():
     record = unestablished("no report")
     assert json.loads(json.dumps(record)) == record
@@ -281,7 +310,9 @@ def test_statuses_and_grades_are_the_words_stored_records_already_hold():
     ]
     assert GRADES == ("ambiguous", "unaudited", "stale", "unapproved", "open", "assumed", "verified")
     assert {"ambiguous", "unaudited", "stale"} == UNESTABLISHED
-    record = classify((AxiomReport("t", ("propext",)),), ()).as_dict()
+    verdict = classify((AxiomReport("t", ("propext",)),), ())
+    assert isinstance(verdict.status, AuditStatus)
+    record = verdict.as_dict()
     assert type(record["status"]) is str and json.dumps(record["status"]) == '"clean"'
     assert type(unestablished("no report")["status"]) is str
     assert f"{AuditStatus.NOT_AUDITED}" == "not audited" and f"{Grade.STALE}" == "stale"
