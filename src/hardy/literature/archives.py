@@ -45,7 +45,7 @@ import tarfile
 import unicodedata
 import zipfile
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from hardy.foundation.files import reserved_device_name
@@ -104,6 +104,8 @@ DEFAULT_LIMITS = Limits()
 
 @dataclass(frozen=True)
 class ExtractedFile:
+    """One admitted member's path, observed byte count, identity and text classification."""
+
     path: str
     size: int
     sha256: str
@@ -112,6 +114,8 @@ class ExtractedFile:
 
 @dataclass(frozen=True)
 class Extraction:
+    """The complete unpacked file inventory, never a partially admitted prefix."""
+
     kind: str  # "tar" | "gzip" | "pdf"
     files: tuple[ExtractedFile, ...]
 
@@ -225,6 +229,16 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
     written for Hardy to unpack, and "repaired" paths are how two members
     come to land on one file.
     """
+    parts = _member_parts(name)
+    _portable_components(name, parts, limits)
+    path = "/".join(parts)
+    if len(path.encode("utf-8")) > limits.max_path_bytes:
+        raise ArchiveError(f"the member path {name!r} is too long")
+    return path
+
+
+def _member_parts(name: str) -> list[str]:
+    """Refuse ambiguous or escaping spellings before filesystem portability checks."""
     if "\x00" in name:
         raise ArchiveError("a member path contains a NUL byte")
     # `tarfile` decodes the name field with `surrogateescape`, so bytes that
@@ -245,6 +259,10 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
         raise ArchiveError(f"the member path {name!r} climbs out of the archive root")
     if not parts:
         raise ArchiveError(f"the member path {name!r} names nothing")
+    return parts
+
+
+def _portable_components(name: str, parts: list[str], limits: Limits) -> None:
     reserved = {"con", "prn", "aux", "nul", "conin$", "conout$"} | {
         f"{prefix}{digit}" for prefix in ("com", "lpt") for digit in "123456789¹²³"
     }
@@ -259,37 +277,82 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
         raise ArchiveError(f"a component of the member path {name!r} is too long")
     if any(reserved_device_name(part) for part in parts):
         raise ArchiveError(f"member path {name!r} uses a Windows reserved device name")
-    path = "/".join(parts)
-    if len(path.encode("utf-8")) > limits.max_path_bytes:
-        raise ArchiveError(f"the member path {name!r} is too long")
-    return path
+
+
+@dataclass
+class _ArchiveContents:
+    """Shared admission state for tar and zip members, in their declared order.
+
+    Containers own stream/type interpretation. This owner checks the paths and
+    cumulative quotas each would produce, then records only a completed write.
+    Implicit parent directories count as occupied paths and toward later entry
+    bounds, exactly like directories declared as separate members.
+    """
+
+    into: Path
+    limits: Limits
+    files: list[ExtractedFile] = field(default_factory=list)
+    written: set[str] = field(default_factory=set)
+    directories: set[str] = field(default_factory=set)
+    spellings: dict[str, str] = field(default_factory=dict)
+    total: int = 0
+
+    def path(self, name: str) -> str:
+        """Register a portable spelling before interpreting the member's type."""
+        path = member_path(name, self.limits)
+        _portable_spelling(path, self.spellings)
+        return path
+
+    def directory(self, path: str) -> None:
+        """Admit a directory only when no file blocks it and the entry bound holds."""
+        _no_file_on_the_way(path, self.written, include_self=True)
+        self._entry_room()
+        # A member `a/b/c/` creates three directories, not just the leaf.
+        self.directories.update(_prefixes(path))
+        (self.into / path).mkdir(parents=True, exist_ok=True)
+
+    def check_file(self, path: str, declared: int) -> None:
+        """Check occupancy and declared quotas before opening a member's body."""
+        if path in self.written:
+            raise ArchiveError(f"the archive names {path!r} twice")
+        if path in self.directories:
+            raise ArchiveError(f"the archive names {path!r} as a file and as a directory")
+        _no_file_on_the_way(path, self.written, include_self=False)
+        self._entry_room()
+        if declared > self.limits.max_file_bytes:
+            raise ArchiveError(f"{path!r} is {declared} bytes, over the {self.limits.max_file_bytes}-byte limit for one file")
+        if self.total + declared > self.limits.max_total_bytes:
+            raise ArchiveError(f"the archive inflates past {self.limits.max_total_bytes} bytes in total")
+
+    def _entry_room(self) -> None:
+        if len(self.files) + len(self.directories) + 1 > self.limits.max_files:
+            raise ArchiveError(f"the archive holds more than {self.limits.max_files} entries")
+
+    def record(self, item: ExtractedFile) -> None:
+        """Commit a completed file and the implicit parents its write created."""
+        self.files.append(item)
+        self.written.add(item.path)
+        self.directories.update(_prefixes(item.path)[:-1])
+        self.total += item.size
+
+    def inventory(self) -> tuple[ExtractedFile, ...]:
+        """A nonempty inventory in stable path order after every member succeeded."""
+        if not self.files:
+            raise ArchiveError("the archive holds no files")
+        return tuple(sorted(self.files, key=lambda item: item.path))
 
 
 def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[ExtractedFile, ...]:
-    files: list[ExtractedFile] = []
-    written: set[str] = set()
-    directories: set[str] = set()
-    spellings: dict[str, str] = {}
-    total = 0
+    contents = _ArchiveContents(into, limits)
     # Stream mode: members are read in order and never seeked back to, which
     # is what lets the bounded reader above be the only source of bytes.
     with tarfile.open(fileobj=stream, mode="r|") as tar:
         for member in tar:
             if member.isdir() and _root_directory(member.name):
                 continue
-            path = member_path(member.name, limits)
-            _portable_spelling(path, spellings)
+            path = contents.path(member.name)
             if member.isdir():
-                _no_file_on_the_way(path, written, include_self=True)
-                if len(files) + len(directories) + 1 > limits.max_files:
-                    raise ArchiveError(
-                        f"the archive holds more than {limits.max_files} entries"
-                    )
-                # Every component, not just the leaf: a member `a/b/c/` makes
-                # three directories, and counting one let a bounded number of
-                # members produce an unbounded number of inodes.
-                directories.update(_prefixes(path))
-                (into / path).mkdir(parents=True, exist_ok=True)
+                contents.directory(path)
                 continue
             if not member.isfile():
                 what = (
@@ -302,38 +365,12 @@ def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[Extracte
                 raise ArchiveError(
                     f"{member.name!r} is {what}; only files and directories are unpacked"
                 )
-            if path in written:
-                raise ArchiveError(f"the archive names {path!r} twice")
-            if path in directories:
-                raise ArchiveError(
-                    f"the archive names {path!r} as a file and as a directory"
-                )
-            _no_file_on_the_way(path, written, include_self=False)
-            if len(files) + len(directories) + 1 > limits.max_files:
-                raise ArchiveError(f"the archive holds more than {limits.max_files} entries")
-            if member.size > limits.max_file_bytes:
-                raise ArchiveError(
-                    f"{path!r} is {member.size} bytes, over the {limits.max_file_bytes}-byte "
-                    "limit for one file"
-                )
-            if total + member.size > limits.max_total_bytes:
-                raise ArchiveError(
-                    f"the archive inflates past {limits.max_total_bytes} bytes in total"
-                )
+            contents.check_file(path, member.size)
             body = tar.extractfile(member)
             if body is None:
                 raise ArchiveError(f"{path!r} has no readable body")
-            files.append(_write(into, path, body, limits, member.size))
-            written.add(path)
-            # The parents `_write` made on the way past. Without them a later
-            # member named `a` -- after `a/b.tex` created `a` -- reached the
-            # open as a directory and raised `IsADirectoryError` from three
-            # frames down instead of this module's own refusal.
-            directories.update(_prefixes(path)[:-1])
-            total += files[-1].size
-    if not files:
-        raise ArchiveError("the archive holds no files")
-    return tuple(sorted(files, key=lambda item: item.path))
+            contents.record(_write(into, path, body, limits, member.size))
+    return contents.inventory()
 
 
 def _extract_zip(data: bytes, into: Path, limits: Limits) -> tuple[ExtractedFile, ...]:
@@ -344,48 +381,25 @@ def _extract_zip(data: bytes, into: Path, limits: Limits) -> tuple[ExtractedFile
     passes its declared size or the file ceiling refuses the archive. A
     symlink is a zip entry whose Unix mode says so, and is refused by name.
     """
-    files: list[ExtractedFile] = []
-    written: set[str] = set()
-    directories: set[str] = set()
-    spellings: dict[str, str] = {}
-    total = 0
+    contents = _ArchiveContents(into, limits)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         for member in archive.infolist():
             if member.is_dir() and _root_directory(member.filename):
                 continue
-            path = member_path(member.filename, limits)
-            _portable_spelling(path, spellings)
+            path = contents.path(member.filename)
             mode = (member.external_attr >> 16) & 0o170000
             if member.is_dir():
-                _no_file_on_the_way(path, written, include_self=True)
-                if len(files) + len(directories) + 1 > limits.max_files:
-                    raise ArchiveError(f"the archive holds more than {limits.max_files} entries")
-                directories.update(_prefixes(path))
-                (into / path).mkdir(parents=True, exist_ok=True)
+                contents.directory(path)
                 continue
             if mode == 0o120000:
                 raise ArchiveError(f"{member.filename!r} is a symlink; only files and directories are unpacked")
             if mode and mode != 0o100000:
                 raise ArchiveError(f"{member.filename!r} is not a regular file; only files and directories are unpacked")
-            if path in written:
-                raise ArchiveError(f"the archive names {path!r} twice")
-            if path in directories:
-                raise ArchiveError(f"the archive names {path!r} as a file and as a directory")
-            _no_file_on_the_way(path, written, include_self=False)
-            if len(files) + len(directories) + 1 > limits.max_files:
-                raise ArchiveError(f"the archive holds more than {limits.max_files} entries")
-            if member.file_size > limits.max_file_bytes:
-                raise ArchiveError(f"{path!r} is {member.file_size} bytes, over the {limits.max_file_bytes}-byte limit for one file")
-            if total + member.file_size > limits.max_total_bytes:
-                raise ArchiveError(f"the archive inflates past {limits.max_total_bytes} bytes in total")
+            contents.check_file(path, member.file_size)
             with archive.open(member) as body:
-                files.append(_write(into, path, body, limits, member.file_size))
-            written.add(path)
-            directories.update(_prefixes(path)[:-1])
-            total += files[-1].size
-    if not files:
-        raise ArchiveError("the archive holds no files")
-    return tuple(sorted(files, key=lambda item: item.path))
+                item = _write(into, path, body, limits, member.file_size)
+            contents.record(item)
+    return contents.inventory()
 
 
 def _root_directory(name: str) -> bool:
