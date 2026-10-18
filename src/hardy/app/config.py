@@ -13,6 +13,7 @@ from typing import Any
 
 from hardy.agents import compaction
 from hardy.agents.spend_budget import SpendPolicy
+from hardy.app import backends
 from hardy.foundation.locking import replace_with_retry
 from hardy.prompts.user import unquoted
 from hardy.workflows import layout
@@ -91,7 +92,7 @@ PROJECT_SETTINGS = frozenset({"project"})
 # harness-owned loop of issue #23 -- Hardy decides when a provider call is
 # made, keeps both bounds itself, and can decline a call outright -- and it
 # needs `ANTHROPIC_API_KEY`.
-BACKENDS = ("claude", "api", "openai", "openrouter")
+BACKENDS = tuple(backend.name for backend in backends.BACKENDS if backend.interactive)
 DEFAULT_BACKEND = "claude"
 
 #: How each backend is paid for, in the words a session banner and the model
@@ -100,10 +101,7 @@ DEFAULT_BACKEND = "claude"
 #: is not a cosmetic error -- it is the wrong answer to the question the line
 #: exists to answer.
 AUTHENTICATION = {
-    "claude": "Claude Code subscription",
-    "api": "Anthropic API key (metered)",
-    "openai": "OpenAI-compatible API key (metered)",
-    "openrouter": "OpenRouter API key (metered)",
+    backend.name: backend.authentication for backend in backends.BACKENDS if backend.interactive
 }
 
 
@@ -766,9 +764,10 @@ def load(
     compute_detach_seconds = _detach_after(values)
 
     backend = text("backend", DEFAULT_BACKEND)
-    if backend not in BACKENDS:
+    adapter = backends.find(backend)
+    if adapter is None or not adapter.interactive:
         raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
-    if backend in {"openai", "openrouter"} and not values.get("model"):
+    if adapter.requires_model and not values.get("model"):
         raise ValueError(f"the {backend} backend requires an explicit model identity")
     provider_budget = None
     if values.get("provider_budget"):
@@ -776,7 +775,7 @@ def load(
         if not budget_path.is_absolute():
             budget_path = path.parent / budget_path
         provider_budget = SpendPolicy.model_validate_json(budget_path.read_text(encoding="utf-8"))
-        if backend not in {"api", "openai", "openrouter"}:
+        if not adapter.provider_budget:
             raise ValueError("provider budgets require the harness-owned API backend")
     cas_backend = text("cas_backend", DEFAULT_CAS_BACKEND)
     # Rejected here rather than at first use: an unknown backend is a typo in a

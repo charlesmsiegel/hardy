@@ -525,6 +525,14 @@ Cost: compatible services differ in model names and protocol support. A missing
 usage field remains unknown, and a deadline cannot revoke a request already
 sent to the provider. Staged SDK workflows retain their existing transports.
 
+Application construction, configuration, model rosters and dependency discovery
+read the same backend descriptors. Each descriptor names a transport rather
+than inferring its call ownership from a separate set of backend strings.
+These are adapter facts: a model roster still proves neither availability nor
+provider capabilities. Configuration and saved identities keep their existing
+string spellings, and the staged-only Codex adapter stays separate from the
+interactive choices.
+
 The rules are on [module boundaries](module-boundaries.md).
 
 ### Internal packages with enforced dependencies
