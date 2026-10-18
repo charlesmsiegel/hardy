@@ -100,6 +100,7 @@ def _copy_tree(root: Path, into: Path, prefix: str, files: list[tuple[str, str]]
 def export_library(
     library: ManagedLibrary, *, classes: frozenset[ExportClass], into: Path, shared_lean: Path | None = None,
 ) -> ExportManifest:
+    """Publish only the selected portable classes into one fresh, atomic bundle."""
     into = Path(into).absolute()
     parent = WriteGuard(into.parent, create=True)
     try:
@@ -135,23 +136,7 @@ def _export_library(library: ManagedLibrary, *, classes: frozenset[ExportClass],
     root = library.root
     if ExportClass.METADATA_SEMANTICS in classes:
         for sha in digests:
-            directory = root / ARTIFACTS / sha
-            artifact_access = library.artifacts.record(sha).access
-            _copy(directory / RECORD, into, f"{ARTIFACTS}/{sha}/{RECORD}", files)
-            _copy_tree(directory / PROVENANCE_DIR, into, f"{ARTIFACTS}/{sha}/{PROVENANCE_DIR}", files)
-            for record in library.representations.list(sha):
-                rep_dir = root / REPRESENTATIONS / sha / record.id
-                _copy(rep_dir / REPRESENTATION_RECORD, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{REPRESENTATION_RECORD}", files)
-                _copy_tree(rep_dir / MAPPINGS, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{MAPPINGS}", files)
-                # A derived text is governed by the stricter of its own policy and
-                # its artifact's: a policy tightened after extraction still holds.
-                portable = most_restrictive(artifact_access, record.access) not in PRIVATE or record.kind in PORTABLE_KINDS
-                for name in record.payload_files:
-                    if portable and (rep_dir / name).is_file():
-                        _copy(rep_dir / name, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{name}", files)
-                    else:
-                        withheld.append(f"{sha}/{record.id}/{name}")
-            _copy_tree(root / TREES / sha, into, f"{TREES}/{sha}", files)
+            withheld.extend(_export_artifact_metadata(library, sha, into, files))
         _copy_tree(root / TREES / "journal", into, f"{TREES}/journal", files)
         for journal in JOURNALS:
             _copy_tree(root / journal, into, journal, files)
@@ -160,20 +145,10 @@ def _export_library(library: ManagedLibrary, *, classes: frozenset[ExportClass],
             _copy(shared_lean / relative, into, f"lean/{relative.as_posix()}", files)
     if ExportClass.PRIVATE_SOURCE_CACHE in classes:
         for sha in digests:
-            content = root / ARTIFACTS / sha / CONTENT
-            if content.is_file():
-                _copy(content, into, f"{ARTIFACTS}/{sha}/{CONTENT}", files)
-            else:
+            absent, uncopied = _export_artifact_cache(library, sha, into, files)
+            if absent:
                 missing.append(sha)
-            for record in library.representations.list(sha):
-                for name in record.payload_files:
-                    relative = f"{REPRESENTATIONS}/{sha}/{record.id}/{name}"
-                    if relative not in {f for f, _ in files}:
-                        payload = root / REPRESENTATIONS / sha / record.id / name
-                        if payload.is_file():
-                            _copy(payload, into, relative, files)
-                        else:
-                            withheld.append(f"{sha}/{record.id}/{name}")
+            withheld.extend(uncopied)
         copied_payloads = {name.removeprefix(f"{REPRESENTATIONS}/") for name, _ in files if name.startswith(f"{REPRESENTATIONS}/")}
         withheld = [name for name in withheld if name not in copied_payloads]
     manifest = ExportManifest(classes=tuple(sorted(classes, key=lambda c: c.value)), files=tuple(files), artifacts=digests,
@@ -182,7 +157,49 @@ def _export_library(library: ManagedLibrary, *, classes: frozenset[ExportClass],
     return manifest
 
 
+def _export_artifact_metadata(library: ManagedLibrary, sha: str, into: Path, files: list[tuple[str, str]]) -> list[str]:
+    """Copy attribution and structure, applying both artifact and representation access."""
+    withheld = []
+    directory = library.root / ARTIFACTS / sha
+    artifact_access = library.artifacts.record(sha).access
+    _copy(directory / RECORD, into, f"{ARTIFACTS}/{sha}/{RECORD}", files)
+    _copy_tree(directory / PROVENANCE_DIR, into, f"{ARTIFACTS}/{sha}/{PROVENANCE_DIR}", files)
+    for record in library.representations.list(sha):
+        rep_dir = library.root / REPRESENTATIONS / sha / record.id
+        _copy(rep_dir / REPRESENTATION_RECORD, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{REPRESENTATION_RECORD}", files)
+        _copy_tree(rep_dir / MAPPINGS, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{MAPPINGS}", files)
+        # A policy tightened after extraction still governs its derived text.
+        portable = most_restrictive(artifact_access, record.access) not in PRIVATE or record.kind in PORTABLE_KINDS
+        for name in record.payload_files:
+            if portable and (rep_dir / name).is_file():
+                _copy(rep_dir / name, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{name}", files)
+            else:
+                withheld.append(f"{sha}/{record.id}/{name}")
+    _copy_tree(library.root / TREES / sha, into, f"{TREES}/{sha}", files)
+    return withheld
+
+
+def _export_artifact_cache(library: ManagedLibrary, sha: str, into: Path, files: list[tuple[str, str]]) -> tuple[bool, list[str]]:
+    """Copy available private bytes without recopying payloads already made portable."""
+    content = library.root / ARTIFACTS / sha / CONTENT
+    absent = not content.is_file()
+    if not absent:
+        _copy(content, into, f"{ARTIFACTS}/{sha}/{CONTENT}", files)
+    withheld = []
+    for record in library.representations.list(sha):
+        for name in record.payload_files:
+            relative = f"{REPRESENTATIONS}/{sha}/{record.id}/{name}"
+            if relative not in {f for f, _ in files}:
+                payload = library.root / REPRESENTATIONS / sha / record.id / name
+                if payload.is_file():
+                    _copy(payload, into, relative, files)
+                else:
+                    withheld.append(f"{sha}/{record.id}/{name}")
+    return absent, withheld
+
+
 def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | None = None) -> ImportSummary:
+    """Restore matching bytes and empty journals, preserving every local disagreement."""
     bundle = Path(bundle)
     manifest = ExportManifest.model_validate_json(read_bytes(bundle, MANIFEST))
     copied: list[str] = []
@@ -216,39 +233,11 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
         if owner is not None:
             grouped[owner].append((relative, safe, digest))
             continue
-        try:
-            data = read_bytes(bundle, safe)
-        except (OSError, LayoutError) as error:
-            skipped.append(f"{relative}: cannot read bundle file ({error})")
-            continue
-        if hashlib.sha256(data).hexdigest() != digest:
-            skipped.append(f"{relative}: digest mismatch")
-            continue
-        if relative.startswith("lean/"):
-            if shared_lean is None:
-                skipped.append(f"{relative}: no shared Lean root given")
-                continue
-            destination = shared_lean
-            destination_relative = PurePosixPath(*safe.parts[1:])
-            if destination_relative.suffix != ".lean":
-                skipped.append(f"{relative}: not an exported Lean source")
-                continue
+        fault = _import_payload(library.root, bundle, safe, digest, shared_lean)
+        if fault is None:
+            copied.append(relative)
         else:
-            destination = library.root
-            destination_relative = safe
-        try:
-            guard, name = guard_for(destination, destination_relative, create=True)
-            target = guard.path(name)
-            if target.exists():
-                with guard.open(name, "rb") as handle:
-                    same = hashlib.sha256(handle.read()).hexdigest() == digest
-                skipped.append(f"{relative}: already present" if same else f"{relative}: local file differs; not overwritten")
-                continue
-            guard.write_bytes(name, data)
-        except (OSError, LayoutError) as error:
-            skipped.append(f"{relative}: cannot write destination ({error})")
-            continue
-        copied.append(relative)
+            skipped.append(f"{relative}: {fault}")
     # A journal is a hash chain: it is imported whole after its staged copy
     # verifies, or not at all. A gap or a corrupt revision would otherwise
     # seed a journal every later replay refuses.
@@ -268,6 +257,37 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
             skipped.append(f"{owner}: {fault}; nothing of this journal was imported")
     return ImportSummary(copied=tuple(copied), skipped=tuple(skipped), journals_seeded=tuple(j for j in seeded if any(c.startswith(j + "/") for c in copied)),
                          journals_kept=tuple(kept))
+
+
+def _import_payload(root: Path, bundle: Path, safe: PurePosixPath, digest: str, shared_lean: Path | None) -> str | None:
+    """Verify one ordinary file, choose its root, and refuse to overwrite local bytes."""
+    try:
+        data = read_bytes(bundle, safe)
+    except (OSError, LayoutError) as error:
+        return f"cannot read bundle file ({error})"
+    if hashlib.sha256(data).hexdigest() != digest:
+        return "digest mismatch"
+    if safe.parts[0] == "lean":
+        if shared_lean is None:
+            return "no shared Lean root given"
+        destination = shared_lean
+        destination_relative = PurePosixPath(*safe.parts[1:])
+        if destination_relative.suffix != ".lean":
+            return "not an exported Lean source"
+    else:
+        destination = root
+        destination_relative = safe
+    try:
+        guard, name = guard_for(destination, destination_relative, create=True)
+        target = guard.path(name)
+        if target.exists():
+            with guard.open(name, "rb") as handle:
+                same = hashlib.sha256(handle.read()).hexdigest() == digest
+            return "already present" if same else "local file differs; not overwritten"
+        guard.write_bytes(name, data)
+    except (OSError, LayoutError) as error:
+        return f"cannot write destination ({error})"
+    return None
 
 
 def _import_journal(root: Path, bundle: Path, owner: str, entries: list[tuple[str, PurePosixPath, str]]) -> str | None:
@@ -308,5 +328,6 @@ def _import_journal(root: Path, bundle: Path, owner: str, entries: list[tuple[st
 
 
 def bundle_digest(bundle: Path) -> str:
+    """Identity of the manifest's ordered file claims, independently of creation time."""
     manifest = json.loads((Path(bundle) / MANIFEST).read_text(encoding="utf-8"))
     return json_digest(manifest.get("files", []))
