@@ -13,6 +13,7 @@ from typing import Any
 
 from hardy.algebra import tools as cas_tools
 from hardy.app import config as configuration
+from hardy.app.session_builder import SessionBuilder
 from hardy.app.wiring import session_runtime
 from hardy.formal import lakefile
 from hardy.formal import search as search_tools
@@ -414,34 +415,12 @@ class ProjectOpener:
             # would silently discard the conversation of every problem visited
             # afterwards -- the standing-preference behaviour the flag refuses
             # to be.
-            def worker_cas(cwd: Path):
-                """A kernel of its own for one background worker, as `_chat` gives the launch session."""
-                runtime, _detail = cas_tools.build_runtime(
-                    backend_name=config.cas_backend, command=config.cas_command, limits=config.limits,
-                    log_path=cwd / "cells.jsonl", cwd=cwd,
-                )
-                return runtime
-
-            session = MathematicsSession(
-                config.layout.problem,
-                session_runtime(config),
-                config.lean_command,
-                config.latex_command,
+            builder = SessionBuilder(config, cas, cas_detail, search, self._search_detail)
+            session = builder.build(
                 confirm,
-                lean_project=config.lean_project,
-                lean_timeout=config.lean_timeout,
-                cas=cas,
-                cas_detail=cas_detail,
-                search=search,
-                search_detail=self._search_detail,
-                project_context=config.project_context,
-                limits=config.limits,
-                context_window=config.context_window,
-                delegation_slots=config.delegation_workers,
-                detach_after=config.compute_detach_seconds,
-                cas_factory=worker_cas,
-                chat=config.chat,
                 require_existing=require_existing,
+                make_session=MathematicsSession,
+                make_runtime=session_runtime,
             )
         except BaseException:
             # The kernel this call started, and only that one. The session the
