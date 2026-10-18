@@ -1,31 +1,31 @@
 r"""One bibliography, one writer.
 
-Every reference Hardy knows lives in `<problem>/bibliography.json`, and
-`Bibliography.cite` is the only function that writes it. Nothing else edits
-it, nothing appends to the `.tex` it generates, and no model ever hand-writes
-an entry -- which is what makes the two promises below enforceable rather than
-conventional.
+Every reference Hardy knows lives in `<problem>/bibliography.json`.
+`Bibliography.cite` and `cite_edition` share one admission and publication
+path. Nothing appends to the `.tex` it generates, and no model hand-writes an
+entry -- which makes the two promises below enforceable rather than conventional.
 
-**Deduplication.** An entry is identified by its versioned arXiv id and by its
-DOI, both when it has both. The same paper reached by a search and then by a
-DOI is one entry with two aliases, not two entries with two cite keys and two
-numbers in the reference list.
+**Deduplication.** A catalog edition or an exact arXiv version identifies the
+text that was read. A DOI or ISBN is a discovery alias, not proof that two
+editions are the same text. Both citation paths compare the same exact
+identities, and refuse a request that identifies several stored entries.
 
-**Stable keys.** A cite key is a function of the paper and of nothing else:
-first author, year, first real word of the title, and a digest of the paper's
-own identity. No store is consulted to mint one, so the same paper gets the
-same key in every run, in every workspace, whatever order it was cited in and
-whatever else is cited beside it.
+**Stable keys.** A new key depends on the first author, year, first real title
+word, and a digest of the exact citation identity. Equal descriptions and
+identities mint equal keys regardless of workspace or citation order. An
+arXiv edition uses its canonical version identity on either path. Existing
+stored keys are retained, including keys minted under older rules; metadata
+changes do not rewrite a stored citation.
 
 The digest is the part that looks like clutter and is not. Without it a key is
 `perelman2002entropy`, and two papers can want that -- same first author, same
 year, same first title word -- at which point one of them has to take
 something else, and *which* one depends on who was cited first. That is an
-order-dependent key, which is the thing this section promises not to have; the
-alternatives are reassigning a key an already-compiled `\cite` points at, or
-admitting the guarantee holds only until a collision. Five extra characters
-buys the guarantee unconditionally, and the key is a token the model is handed
-rather than a name anyone has to remember.
+order-dependent key, which is the thing this section promises not to have.
+The ten-character digest distinguishes these identities without assigning
+keys by citation order; a remaining collision is refused rather than changing
+an existing key. The key is a token the model is handed rather than a name
+anyone has to remember.
 
 The generated file is a `thebibliography` environment, not a `.bib`. That is a
 deliberately small choice with a large consequence: a `\bibitem` resolves under
@@ -41,8 +41,9 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -375,6 +376,36 @@ def citation_identity(names: tuple[str, ...]) -> str:
     exact = [identity for name in names if (identity := _exact_identity(name)) is not None]
     arxiv = [identity for identity in exact if identity.startswith("arxiv:")]
     return (arxiv or exact or list(names))[0]
+
+
+def _held(store: Store, names: tuple[str, ...]) -> Entry | None:
+    """The existing exact edition, refusing identities that name several entries.
+
+    Discovery aliases cannot establish which text was read. The same exact
+    matching rule applies to an arXiv citation and a catalog citation.
+    """
+    exact = {identity for name in names if (identity := _exact_identity(name)) is not None}
+    matches = [
+        entry for entry in store.entries
+        if any(_exact_identity(name) in exact for name in entry.identities)
+    ]
+    if len(matches) > 1:
+        keys = ", ".join(entry.key for entry in matches)
+        raise BibliographyError(
+            f"exact identities match several bibliography entries ({keys}); "
+            "reconcile their identities before citing"
+        )
+    return matches[0] if matches else None
+
+
+def _refuse_taken_key(store: Store, candidate: Entry) -> None:
+    """A digest collision must refuse the citation before either file is written."""
+    for entry in store.entries:
+        if entry.key == candidate.key:
+            raise BibliographyError(
+                f"{candidate.identities[0]} wants the cite key {candidate.key}, which already "
+                f"belongs to {entry.arxiv_id or entry.identities[0]}"
+            )
 
 
 def _year(text: str) -> str:
