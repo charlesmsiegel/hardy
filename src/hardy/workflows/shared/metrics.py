@@ -13,6 +13,7 @@ from collections import Counter
 from collections.abc import Iterable
 
 from hardy.foundation.values import FrozenModel
+from hardy.workflows.ledger.contracts import ProjectItem, Relation
 
 from .claims import LinkStatus, LinkStore
 from .ledger import SharedClaims
@@ -67,8 +68,8 @@ def _pairs(counter: Counter) -> tuple[tuple[str, int], ...]:
 def semantic_report(claims: SharedClaims, links: LinkStore, realizations: RealizationStore, promotions: PromotionStore) -> SemanticReport:
     items = claims.claims()
     kinds: Counter = Counter(i.kind.value for i in items)
-    relations: Counter = Counter(r.kind.value for r in claims.snapshot().current(__import__("hardy.workflows.ledger.contracts", fromlist=["Relation"]).Relation))
-    clusters = sum(1 for n in claims.snapshot().current(__import__("hardy.workflows.ledger.contracts", fromlist=["ProjectItem"]).ProjectItem)
+    relations: Counter = Counter(r.kind.value for r in claims.snapshot().current(Relation))
+    clusters = sum(1 for n in claims.snapshot().current(ProjectItem)
                    if n.kind.value == "research_note" and any(k == "cluster" for k, _ in n.semantics))
     heads = links.heads()
     statuses: Counter = Counter(link.status.value for link in heads.values())
