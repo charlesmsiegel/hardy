@@ -91,34 +91,17 @@ class ApiProvider:
         out with what admission left. A transient failure is retried after
         backing off, unless the back-off alone would outlast the deadline.
         """
-        started, provider_called = self._clock(), False
+        started = self._clock()
         request = self._request(system, messages, specs)
         for attempt in range(ATTEMPTS):
-            quoted = timeout if attempt == 0 else self._remaining(timeout, started)
-            if quoted is not None:
-                request["timeout"] = quoted
-            reservation = self._admit(request, provider_called=provider_called)
-            remaining = self._remaining(timeout, started)
-            if remaining is not None:
-                if remaining <= 0:
-                    self._settle(reservation, dict.fromkeys(COUNTERS, 0))
-                    raise ProviderRequestTimeout(f"the provider request exceeded its {timeout:g}s budget before sending",
-                        provider_called=provider_called)
-                request["timeout"] = remaining
-            provider_called = True
+            reservation, remaining = self._admit_attempt(request, timeout, started, attempt)
             try:
                 reply, reported = self._attempt(request, remaining, reservation)
             except Exception as error:
                 if self._timed_out(error):
                     bound = f"its {timeout:g}s budget" if timeout is not None else "the transport's own timeout"
                     raise TimeoutError(f"the provider request exceeded {bound}") from error
-                delay = self._retry_delay(error, attempt, timeout, started)
-                if delay is None:
-                    raise
-                self.observe({"type": "provider_retry", "status": getattr(error, "status_code", None),
-                              "attempt": attempt + 1, "sleep": delay})
-                self._sleep(delay)
-                if timeout is not None and self._clock() - started >= timeout:
+                if not self._backoff(error, attempt, timeout, started):
                     raise
                 continue
             self._settle(reservation, reported)
@@ -127,6 +110,27 @@ class ApiProvider:
 
     def _remaining(self, timeout: float | None, started: float) -> float | None:
         return None if timeout is None else max(0.0, timeout - (self._clock() - started))
+
+    def _admit_attempt(self, request: dict[str, Any], timeout: float | None,
+                       started: float, attempt: int) -> tuple[str | None, float | None]:
+        """Quote before admission, then send only within the time admission left.
+
+        Reaching a retry means an earlier attempt was sent. If admission uses
+        up the deadline, this attempt settles at zero and the timeout still
+        states whether the call already incurred an earlier liability.
+        """
+        quoted = timeout if attempt == 0 else self._remaining(timeout, started)
+        if quoted is not None:
+            request["timeout"] = quoted
+        reservation = self._admit(request, provider_called=attempt > 0)
+        remaining = self._remaining(timeout, started)
+        if remaining is not None:
+            if remaining <= 0:
+                self._settle(reservation, dict.fromkeys(COUNTERS, 0))
+                raise ProviderRequestTimeout(f"the provider request exceeded its {timeout:g}s budget before sending",
+                    provider_called=attempt > 0)
+            request["timeout"] = remaining
+        return reservation, remaining
 
     def _admit(self, request: dict[str, Any], *, provider_called: bool) -> str | None:
         """Reserve one attempt's expected spend: its reservation, or None unbudgeted.
@@ -180,3 +184,18 @@ class ApiProvider:
             delay = max(delay, float(headers.get("retry-after", 0)))
         remaining = self._remaining(timeout, started)
         return None if remaining is not None and delay >= remaining else delay
+
+    def _backoff(self, error: Exception, attempt: int, timeout: float | None, started: float) -> bool:
+        """Record and wait for an eligible retry; decline it if the wait expires.
+
+        The delay is checked both before and after sleeping, because a clock
+        can advance farther than the requested sleep.
+        """
+        delay = self._retry_delay(error, attempt, timeout, started)
+        if delay is None:
+            return False
+        self.observe({"type": "provider_retry", "status": getattr(error, "status_code", None),
+                      "attempt": attempt + 1, "sleep": delay})
+        self._sleep(delay)
+        expired = timeout is not None and self._clock() - started >= timeout
+        return not expired
