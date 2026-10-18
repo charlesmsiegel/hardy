@@ -120,16 +120,26 @@ def test_no_tools_reader_and_reasoning_metadata_continuation():
     assert estimate_tokens([Message("assistant", text=turn.text, reasoning=turn.reasoning)]) > 20000
 
 
-def test_deadline_bounds_the_whole_request_and_retains_budget_liability(tmp_path):
+def test_deadline_bounds_the_whole_request_and_retains_budget_liability(tmp_path, monkeypatch):
     from hardy.agents.spend_budget import SpendBudget, SpendLimitReached, SpendPolicy
     entered, release = threading.Event(), threading.Event()
     class Slow(Client):
         def create(self, **request):
             entered.set()
-            release.wait(2)
+            release.wait()
             return reply()
+    workers = []
+    start = threading.Thread.start
+    def start_and_wait_for_sdk_entry(worker):
+        start(worker)
+        workers.append(worker)
+        assert entered.wait(10), "the provider worker did not enter the SDK call"
+    # This case needs a sent request. Real journal I/O and thread scheduling
+    # must not consume its admission precondition; the real worker still
+    # waits in create and _within still joins it for the original 0.2 seconds.
+    monkeypatch.setattr(threading.Thread, "start", start_and_wait_for_sdk_entry)
     budget = SpendBudget(tmp_path / "budget.jsonl", SpendPolicy(id="bound", models=("fixture",), token_limit=10000))
-    provider = OpenAIProvider("fixture", client=Slow([]), spend_budget=budget)
+    provider = OpenAIProvider("fixture", client=Slow([]), spend_budget=budget, clock=lambda: 0.0)
     try:
         with pytest.raises(TimeoutError):
             provider.complete(system="", messages=[], specs=[], timeout=.2)
@@ -139,6 +149,38 @@ def test_deadline_bounds_the_whole_request_and_retains_budget_liability(tmp_path
             provider.complete(system="", messages=[], specs=[])
     finally:
         release.set()
+        for worker in workers:
+            worker.join(10)
+            assert not worker.is_alive()
+
+
+def test_admission_that_consumes_the_deadline_never_sends_and_settles_at_zero(tmp_path):
+    from hardy.agents.contracts import ProviderRequestTimeout
+    from hardy.agents.spend_budget import SpendBudget, SpendPolicy
+    clock = [0.0]
+    # Keep durable reservation and settlement real; control only elapsed time.
+    class SlowAdmission(SpendBudget):
+        def reserve(self, request):
+            reservation = super().reserve(request)
+            clock[0] = 0.3
+            return reservation
+    budget = SlowAdmission(tmp_path / "budget.jsonl", SpendPolicy(id="bound", models=("fixture",), token_limit=10000))
+    client = Client([reply()])
+    provider = OpenAIProvider("fixture", client=client, spend_budget=budget, clock=lambda: clock[0])
+
+    with pytest.raises(ProviderRequestTimeout, match="before sending") as expired:
+        provider.complete(system="", messages=[], specs=[], timeout=.2)
+
+    assert expired.value.provider_called is False
+    assert client.requests == []
+    summary = budget.summary()
+    assert summary["reservations"] == 1 and summary["pending"] == 0
+    assert summary["actual_tokens"] == 0
+    events = [json.loads(line) for line in budget.path.read_text(encoding="utf-8").splitlines()]
+    assert [event["kind"] for event in events] == ["start", "reserve", "settle"]
+    assert events[-1]["payload"]["tokens"] == 0
+    assert events[-1]["payload"]["reported"] == {
+        "input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
 
 
 @pytest.mark.parametrize("backend,key", [("openai", "OPENAI_API_KEY"), ("openrouter", "OPENROUTER_API_KEY")])
