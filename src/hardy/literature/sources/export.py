@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -80,6 +81,14 @@ class ImportSummary(FrozenModel):
     skipped: tuple[str, ...]
     journals_seeded: tuple[str, ...]
     journals_kept: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _JournalDestination:
+    """Whether a local journal already has history, or its location was refused."""
+
+    has_history: bool
+    fault: str | None = None
 
 
 def _copy(source: Path, into: Path, relative: str, files: list[tuple[str, str]]) -> None:
@@ -204,20 +213,10 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
     manifest = ExportManifest.model_validate_json(read_bytes(bundle, MANIFEST))
     copied: list[str] = []
     skipped: list[str] = []
-    seeded: list[str] = []
-    kept: list[str] = []
-    journal_state: dict[str, bool] = {}
-    journal_faults: dict[str, str] = {}
     journal_dirs = (*JOURNALS, f"{TREES}/journal")
-    for journal in journal_dirs:
-        try:
-            guard, _ = guard_for(library.root, f"{journal}/.import-location")
-            existing = guard.directory
-            journal_state[journal] = existing.is_dir() and any(existing.glob("*.json"))
-        except (OSError, LayoutError) as error:
-            journal_faults[journal] = str(error)
-            journal_state[journal] = False
-        (kept if journal_state[journal] else seeded).append(journal)
+    destinations = _journal_destinations(library.root, journal_dirs)
+    kept = [owner for owner, target in destinations.items() if target.has_history]
+    seeded = [owner for owner, target in destinations.items() if not target.has_history]
     grouped: dict[str, list[tuple[str, PurePosixPath, str]]] = {journal: [] for journal in journal_dirs}
     for relative, digest in manifest.files:
         try:
@@ -238,25 +237,47 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
             copied.append(relative)
         else:
             skipped.append(f"{relative}: {fault}")
-    # A journal is a hash chain: it is imported whole after its staged copy
-    # verifies, or not at all. A gap or a corrupt revision would otherwise
-    # seed a journal every later replay refuses.
+    journal_copies, journal_skips = _import_journals(library.root, bundle, grouped, destinations)
+    copied.extend(journal_copies)
+    skipped.extend(journal_skips)
+    return ImportSummary(copied=tuple(copied), skipped=tuple(skipped), journals_seeded=tuple(j for j in seeded if any(c.startswith(j + "/") for c in copied)),
+                         journals_kept=tuple(kept))
+
+
+def _journal_destinations(root: Path, owners: tuple[str, ...]) -> dict[str, _JournalDestination]:
+    destinations = {}
+    for owner in owners:
+        try:
+            guard, _ = guard_for(root, f"{owner}/.import-location")
+            existing = guard.directory
+            destinations[owner] = _JournalDestination(existing.is_dir() and any(existing.glob("*.json")))
+        except (OSError, LayoutError) as error:
+            destinations[owner] = _JournalDestination(False, str(error))
+    return destinations
+
+
+def _import_journals(
+    root: Path, bundle: Path, grouped: dict[str, list[tuple[str, PurePosixPath, str]]], destinations: dict[str, _JournalDestination],
+) -> tuple[list[str], list[str]]:
+    """Verify empty-destination journals as whole chains; synchronization stays deferred."""
+    copied = []
+    skipped = []
     for owner, entries in grouped.items():
         if not entries:
             continue
-        if owner in journal_faults:
-            skipped.append(f"{owner}: {journal_faults[owner]}; nothing of this journal was imported")
+        target = destinations[owner]
+        if target.fault is not None:
+            skipped.append(f"{owner}: {target.fault}; nothing of this journal was imported")
             continue
-        if journal_state[owner]:
+        if target.has_history:
             skipped.append(f"{owner}: local journal already has history; merging is synchronization, which is deferred ({len(entries)} file(s) not imported)")
             continue
-        fault = _import_journal(library.root, bundle, owner, entries)
+        fault = _import_journal(root, bundle, owner, entries)
         if fault is None:
             copied.extend(relative for relative, _, _ in entries)
         else:
             skipped.append(f"{owner}: {fault}; nothing of this journal was imported")
-    return ImportSummary(copied=tuple(copied), skipped=tuple(skipped), journals_seeded=tuple(j for j in seeded if any(c.startswith(j + "/") for c in copied)),
-                         journals_kept=tuple(kept))
+    return copied, skipped
 
 
 def _import_payload(root: Path, bundle: Path, safe: PurePosixPath, digest: str, shared_lean: Path | None) -> str | None:
