@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hardy.documents import completion
+from hardy.documents.reader import without_definition_heads
 
 #: What a paper calls something it asserts. Deliberately wider than
 #: `completion.theorem_environments`, which asks what a *writeup* reports:
@@ -246,7 +247,7 @@ def _pages(files: Mapping[str, str], root: str) -> list[tuple[str, str]]:
         if not path or path in seen or path not in files:
             return
         seen.add(path)
-        executed = completion.without_definitions(completion.displayed(files[path], conditionals).executed)
+        executed = without_definition_heads(completion.displayed(files[path], conditionals).executed)
         stack.append((path, executed, 0, list(completion.INCLUSION.finditer(executed))))
 
     opened(root)
