@@ -373,17 +373,15 @@ class _Splice:
 
 
 def without_definitions(text: str) -> str:
-    r"""`text` with the body of every macro definition removed.
+    r"""Raw `text` with every macro definition and its body removed.
 
     What a definition holds is typeset where the macro is *used*, if it ever
     is. Left in, an appendix could carry its whole disclosure inside a
     `\newcommand` nobody expands and satisfy a reader who was shown nothing.
 
-    Over `displayed` text the bodies are already blank -- the display scan
-    stores them rather than running them -- so what this still removes there
-    is the definition's head, and a brace group written straight after it:
-    `\newcommand{\x}{a}{b}` loses `{b}`, which TeX does typeset. That is
-    more than it should, and it is what the obligations are computed over.
+    `Displayed.executed` has already had its bodies masked. Use
+    `without_definition_heads` for that representation: its next brace group
+    belongs to live text, not to a definition that was already consumed.
     """
     out: list[str] = []
     index = 0
@@ -394,3 +392,14 @@ def without_definitions(text: str) -> str:
             index = skip_balanced(text, index, "{", "}")
     out.append(text[index:])
     return "".join(out)
+
+
+def without_definition_heads(executed: str) -> str:
+    r"""Remove macro heads from display-scanner output, leaving live groups.
+
+    The scanner masks a definition's body but retains its head. Reading the
+    body again would consume the live `{b}` in `\newcommand{\x}{a}{b}`.
+    This pass is only for that already-scanned representation; raw source
+    still needs `without_definitions` to remove bodies too.
+    """
+    return DEFINITION.sub("", executed)

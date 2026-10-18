@@ -53,6 +53,20 @@ def files() -> dict[str, str]:
 # --- The inventory -------------------------------------------------------------
 
 
+def test_a_live_group_after_a_definition_is_in_the_paper_inventory() -> None:
+    source = (
+        r"\documentclass{article}\begin{document}"
+        r"\newcommand{\x}{\begin{theorem}\label{hidden}Stored.\end{theorem}}"
+        r"{\begin{theorem}\label{live}Live claim.\end{theorem}}"
+        r"\end{document}"
+    )
+
+    found = assume.inventory({"main.tex": source})
+
+    assert [item.ref for item in found] == ["live"]
+    assert found[0].text == "Live claim."
+
+
 def test_every_statement_the_paper_makes_is_listed_in_reading_order(files) -> None:
     found = assume.inventory(files)
 

@@ -27,9 +27,10 @@ from typing import Literal, get_args
 
 from hardy.documents.conditionals import read_conditionals as read_conditionals
 from hardy.documents.inclusion import INCLUSION as INCLUSION
-from hardy.documents.reader import Displayed, assemble, without_definitions
+from hardy.documents.reader import Displayed, assemble, without_definition_heads
 from hardy.documents.reader import displayed as displayed
 from hardy.documents.reader import target as target
+from hardy.documents.reader import without_definitions as without_definitions
 from hardy.formal.syntax import COMMAND, normalise_lean, strip_comments
 
 # TeX escapes, undone, so prose written for a compiler can be compared with the
@@ -160,7 +161,7 @@ def prose(document: Displayed) -> str:
     was "True": the Lean quotation stood in for the explanation it exists to be
     checked against.
     """
-    return ESCAPED.sub(r"\1", normalise(without_definitions(document.executed)))
+    return ESCAPED.sub(r"\1", normalise(without_definition_heads(document.executed)))
 
 
 def covering(name: str, registry: Sequence[Mapping[str, str]]) -> Mapping[str, str] | None:
@@ -202,16 +203,16 @@ def asserted_theorems(document: Displayed) -> tuple[tuple[str, str], ...]:
         \newcommand{\exampleblock}{\begin{theorem}Not asserted.\end{theorem}}
 
     The display scan already blanks such a body, and the text then goes
-    through `without_definitions` as well -- see there for what that second
-    step still removes. Without the first, this gate's first false positive is
-    a document that was honest, which is how a mechanical rule loses its
-    authority.
+    through `without_definition_heads` to remove the retained heads without
+    consuming live groups after them. Without the first step, this gate's first
+    false positive is a document that was honest, which is how a mechanical
+    rule loses its authority.
 
     Bodies are matched from `\begin{env}` to the next `\end{env}`. Theorem
     environments do not nest in practice, and this is a scanner rather than a
     TeX engine: the limit is stated in docs/design/output-contract.md rather than pretended away.
     """
-    text = without_definitions(document.executed)
+    text = without_definition_heads(document.executed)
     found: list[tuple[str, str]] = []
     for name in sorted(theorem_environments(document)):
         opening = re.compile(rf"\\begin\{{{re.escape(name)}\}}")
@@ -483,7 +484,7 @@ def _appendix(document: Displayed) -> _Appendix:
     quoted = tuple(
         _as_lean(block) for offset, block in document.quoted if offset >= marker.start()
     )
-    written = ESCAPED.sub(r"\1", normalise(without_definitions(document.executed[marker.end() :])))
+    written = ESCAPED.sub(r"\1", normalise(without_definition_heads(document.executed[marker.end() :])))
     return _Appendix(True, quoted, written)
 
 

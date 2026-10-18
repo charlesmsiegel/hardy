@@ -363,11 +363,13 @@ that direction is the safe one; the failure to avoid is crediting a quotation no
 reader was shown.
 
 The same care runs the other way. Theorem environments are read from what the
-document *executes* and then through the pass that removes definition bodies, so
-a `\begin{theorem}` inside a listing is an illustration rather than an
+document *executes*. The scanner masks definition bodies, and the next pass
+removes only their retained heads; a live brace group after a definition still
+counts. A `\begin{theorem}` inside a listing is an illustration rather than an
 assertion, and a `\begin{theorem}` inside a macro nobody expands asserts
-nothing. Without that second step the gate's first false positive would be a
-document that was honest, which is how a mechanical rule loses its authority.
+nothing. Without masking those stored bodies the gate's first false positive
+would be a document that was honest, which is how a mechanical rule loses its
+authority.
 
 ### The scanner reads environments, not claims
 

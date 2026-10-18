@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
 completion = importlib.import_module("hardy.documents.completion")
 
 THEOREM_STYLE = (
@@ -107,12 +109,24 @@ def test_a_theorem_environment_in_a_fragment_counts() -> None:
 
 
 def test_a_theorem_inside_an_unexpanded_macro_is_not_an_assertion() -> None:
-    r"""`executed` keeps a `\newcommand` body. `without_definitions` is what
-    knows the difference between defining a block and typesetting one, and
-    without it this gate's first false positive is a document that was honest."""
+    r"""The display scanner masks a stored `\newcommand` body rather than
+    treating it as a typeset assertion."""
     assert not _owed(
         _tex("\\newcommand{\\exampleblock}{\\begin{theorem}Not asserted.\\end{theorem}}")
     )
+
+
+@pytest.mark.parametrize("head", (
+    r"\newcommand{\x}", r"\renewcommand*\x[1]", r"\providecommand{\x}[1][default]",
+))
+@pytest.mark.parametrize("spacing", ("", "\n"))
+def test_a_live_group_after_a_definition_still_owes_theorem_backing(head, spacing) -> None:
+    body = head + "{unused}" + spacing + r"{\begin{theorem}Live claim.\end{theorem}}"
+
+    found = _owed(_tex(body))
+
+    assert len(found) == 1
+    assert "backed by nothing" in found[0].detail
 
 
 def test_a_theorem_shown_inside_a_listing_is_not_an_assertion() -> None:
