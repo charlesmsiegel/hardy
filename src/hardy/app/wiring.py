@@ -16,8 +16,8 @@ from typing import Any
 from hardy.agents import claude as claude_runtime
 from hardy.agents.spend_budget import SpendPolicy
 from hardy.algebra import tools as cas_tools
+from hardy.app import backends, doctor
 from hardy.app import config as configuration
-from hardy.app import doctor
 
 
 def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BACKEND, *, spend_policy: SpendPolicy | None = None) -> Callable[..., Any]:
@@ -33,21 +33,22 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
     nor a key installed still starts on the default.
     """
 
-    if backend not in configuration.BACKENDS:
+    adapter = backends.find(backend)
+    if adapter is None or not adapter.interactive:
         raise ValueError(f"unknown interactive backend: {backend}")
-    if spend_policy is not None and backend not in {"api", "openai", "openrouter"}:
+    if spend_policy is not None and not adapter.provider_budget:
         raise ValueError("provider budgets require the harness-owned API backend")
 
     def make(model: str | None = None, **context: Any) -> Any:
         if spend_policy is not None and context.get("spend_budget") is None:
             raise ValueError("bind the declared provider budget to a run or session before constructing its runtime")
-        if context.get("spend_budget") is not None and backend not in {"api", "openai", "openrouter"}:
+        if context.get("spend_budget") is not None and not adapter.provider_budget:
             raise ValueError("provider budgets require the harness-owned API backend")
-        if backend == "api":
+        if adapter.transport == backends.Transport.MESSAGES:
             from hardy.agents.api import ApiRuntime
 
             return ApiRuntime(model or default_model, **context)
-        if backend in {"openai", "openrouter"}:
+        if adapter.transport == backends.Transport.CHAT_COMPLETIONS:
             from hardy.agents.api import ApiRuntime
             from hardy.agents.openai_api import OpenAIProvider
 

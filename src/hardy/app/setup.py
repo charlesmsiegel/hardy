@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Literal
 
+from hardy.app import backends
 from hardy.app.config import DEFAULT_CAS_BACKEND, Config
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.values import FrozenModel
@@ -135,7 +136,8 @@ def backend_probe(backend: str) -> Callable[[], tuple[bool, str]]:
     Claude CLI, and a Claude-configured machine passed setup without the key
     the `api` runtime needs and failed at its first request instead.
     """
-    if backend in {"openai", "openrouter"}:
+    adapter = backends.find(backend)
+    if adapter is not None and adapter.transport == backends.Transport.CHAT_COMPLETIONS:
         def probe():
             from hardy.agents.openai_api import KEYS, load_sdk
             try:
@@ -147,7 +149,7 @@ def backend_probe(backend: str) -> Callable[[], tuple[bool, str]]:
                 return False, f"openai {getattr(sdk, '__version__', 'unknown')}, {key} unset"
             return True, f"openai {getattr(sdk, '__version__', 'unknown')}; {backend} key present"
         return probe
-    return probe_api if backend == "api" else probe_claude
+    return probe_api if adapter is not None and adapter.transport == backends.Transport.MESSAGES else probe_claude
 
 
 def resolve_executable(

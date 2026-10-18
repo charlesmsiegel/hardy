@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from hardy.app import backends
+
 CLAUDE = "claude"
 CODEX = "codex"
 
@@ -19,7 +21,7 @@ CODEX = "codex"
 #: these. A transport not named here carries a family of its own name, which
 #: lists nothing and refuses every catalogued entry: the safe answer for a
 #: backend this file has never heard of.
-SERVES: dict[str, str] = {"claude": CLAUDE, "api": CLAUDE, "codex": CODEX, "openai": "openai", "openrouter": "openrouter"}
+SERVES: dict[str, str] = {backend.name: backend.model_family for backend in backends.BACKENDS}
 
 
 @dataclass(frozen=True)

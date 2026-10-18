@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from hardy.app import backends
 from hardy.app.config import DEFAULT_CAS_BACKEND, Config
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
@@ -112,11 +113,14 @@ def _backend_checks(backend: str) -> list[Check]:
     the other way, and is worse -- a machine with no key at all would be called
     ready because the checks it passed were for a backend it is not using.
     """
-    if backend == "api":
+    adapter = backends.find(backend)
+    if adapter is None:
+        return _subscription_checks()
+    if adapter.transport == backends.Transport.MESSAGES:
         return _api_checks()
-    if backend in {"openai", "openrouter"}:
+    if adapter.transport == backends.Transport.CHAT_COMPLETIONS:
         return _openai_checks(backend)
-    if backend == "codex":
+    if adapter.transport == backends.Transport.CODEX_SDK:
         return _codex_checks()
     return _subscription_checks()
 
