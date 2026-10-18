@@ -176,6 +176,31 @@ def test_a_stored_key_minted_under_the_catalog_identity_is_kept(tmp_path: Path, 
     assert not added and again.key == stored and len(bibliography.entries()) == 1
 
 
+@pytest.mark.parametrize("path", ["cite", "cite_edition"])
+def test_a_stored_key_with_an_old_arxiv_subject_spelling_is_kept(tmp_path: Path, path: str):
+    record = _perelman().model_copy(update={"arxiv_id": "math.DG/0211159v1"})
+    record = record.model_copy(update={"content_sha256": digest(record.content())})
+    work, edition = catalog_records(record)
+    stem = cite_key(record).rsplit("-", 1)[0]
+    legacy_identity = f"arxiv:{record.arxiv_id}"
+    stored = f"{stem}-{hashlib.sha256(legacy_identity.encode()).hexdigest()[:10]}"
+    assert stored != cite_key(record)
+    entry = Entry(
+        key=stored, identities=(legacy_identity,), title=record.title, authors=record.authors,
+        year="2002", arxiv_id=record.arxiv_id, content_sha256=record.content_sha256,
+    )
+    (tmp_path / "bibliography.json").write_text(
+        Store(entries=(entry,)).model_dump_json(indent=2) + "\n", encoding="utf-8",
+    )
+    bibliography = Bibliography(tmp_path)
+    if path == "cite":
+        again, added = bibliography.cite(record)
+    else:
+        again, added = bibliography.cite_edition(work, edition, read_artifacts=(PDF,))
+    assert not added and again.key == stored
+    assert [held.key for held in bibliography.entries()] == [stored]
+
+
 def test_a_preprint_does_not_merge_into_a_published_edition_sharing_its_doi(tmp_path: Path):
     """A DOI is an alias for discovery on both paths, never the identity read.
 
