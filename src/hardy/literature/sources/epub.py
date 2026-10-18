@@ -230,6 +230,7 @@ class _Blocks(HTMLParser):
 
 
 def scan_html(source: str) -> tuple[str, list[dict], list[tuple[str, int]]]:
+    """Read normalized block text, DOM ranges and same-document links from markup."""
     parser = _Blocks()
     parser.feed(source)
     parser.close()
@@ -238,6 +239,8 @@ def scan_html(source: str) -> tuple[str, list[dict], list[tuple[str, int]]]:
 
 
 class EpubAdapter:
+    """Preserve source markup alongside attributable text in declared reading order."""
+
     name = NAME
     version = VERSION
 
@@ -245,9 +248,11 @@ class EpubAdapter:
         self.limits = limits
 
     def handles(self, artifact: SourceArtifact) -> bool:
+        """Both EPUB spines and single HTML files use the same markup interpretation."""
         return artifact.format in {SourceFormat.EPUB, SourceFormat.HTML}
 
     def extract(self, artifact: SourceArtifact, data: bytes, *, budget: ExtractionBudget) -> ExtractionResult:
+        """Build DOM and normalized-text representations with explicit block mappings."""
         diagnostics: list[Diagnostic] = []
         if artifact.format is SourceFormat.HTML:
             items = [("document", data.decode("utf-8", errors="replace"))]
@@ -269,30 +274,17 @@ class EpubAdapter:
             parser.feed(source)
             parser.close()
             parser.finish()
-            text, nodes, links = "".join(parser.text), parser.nodes, parser.links
+            text, nodes = "".join(parser.text), parser.nodes
             diagnostics.extend(parser.diagnostics)
             if len(text) + offset > budget.max_text_bytes:
                 raise ExtractionRefused(f"normalized text exceeds the {budget.max_text_bytes} byte bound")
             base = offset
             parts.append(text)
             offset += len(text)
-            ids: dict[str, int] = {}
             for node in nodes:
                 locator = DOMLocator(representation=dom_id, spine_item=href, node_path=node["path"])
                 pairs.append((locator, RepresentationSpan(representation=text_id, start=base + node["start"], end=base + node["end"])))
-                if node["id"]:
-                    ids[node["id"]] = base + node["start"]
-                    observations.append(_observation(artifact.sha256, ObservationKind.LABEL, text_id, base + node["start"], base + node["start"],
-                                                     (("label", node["id"]), ("path", node["path"])), "element id"))
-                if node["tag"] in HEADINGS:
-                    title = text[node["start"]:node["end"]].strip()
-                    match = NUMBERED.match(title)
-                    observations.append(_observation(artifact.sha256, ObservationKind.HEADING, text_id, base + node["start"], base + node["end"],
-                                                     (("level", HEADINGS[node["tag"]]), ("number", match.group("number") if match else ""),
-                                                      ("title", match.group("title") if match else title)), f"{node['tag']} heading"))
-            for target, position in links:
-                observations.append(_observation(artifact.sha256, ObservationKind.REFERENCE, text_id, base + position, base + position,
-                                                 (("kind", "label"), ("number", target)), "same-document link", 0.9))
+            observations.extend(_item_observations(artifact.sha256, text_id, parser, text, base))
             dom_items.append({"item": href, "source": source, "nodes": nodes})
             if index + 1 < len(items):
                 parts.append(ITEM_SEPARATOR)
@@ -301,8 +293,10 @@ class EpubAdapter:
         normalized_text = "".join(parts)
         dom_payload = {DOM_PAYLOAD: json.dumps(dom_items, ensure_ascii=False, sort_keys=True).encode("utf-8")}
         text_payload = {TEXT_PAYLOAD: normalized_text.encode("utf-8")}
+        partial = any(d.severity == "warning" or d.code == "mathml_rendered_as_text" for d in diagnostics)
         dom = DerivedRepresentation(id=dom_id, artifact_sha256=artifact.sha256, kind=RepresentationKind.DOM, extractor=self.name, extractor_version=self.version,
-                                    output_sha256=payload_digest(dom_payload), derived_at=stamp, quality=QualityProfile(status="partial" if any(d.severity == "warning" or d.code == "mathml_rendered_as_text" for d in diagnostics) else "ok", coverage=None if any(d.severity == "warning" or d.code == "mathml_rendered_as_text" for d in diagnostics) else 1.0, diagnostics=tuple(diagnostics)),
+                                    output_sha256=payload_digest(dom_payload), derived_at=stamp,
+                                    quality=QualityProfile(status="partial" if partial else "ok", coverage=None if partial else 1.0, diagnostics=tuple(diagnostics)),
                                     access=artifact.access, payload_files=tuple(dom_payload))
         normalized = DerivedRepresentation(id=text_id, artifact_sha256=artifact.sha256, kind=RepresentationKind.NORMALIZED_TEXT, extractor=self.name,
                                            extractor_version=self.version, inputs=(dom_id,), output_sha256=payload_digest(text_payload), derived_at=stamp,
@@ -325,6 +319,25 @@ class EpubAdapter:
             items, diagnostics = _spine_items(into, opf_path, package, members)
             metadata = _package_metadata(package)
         return items, metadata, diagnostics
+
+
+def _item_observations(sha: str, rep: str, parser: _Blocks, text: str, base: int) -> list[StructuralObservation]:
+    """Interpret native element ids, headings and links at their assembled-text offsets."""
+    observations = []
+    for node in parser.nodes:
+        if node["id"]:
+            observations.append(_observation(sha, ObservationKind.LABEL, rep, base + node["start"], base + node["start"],
+                                             (("label", node["id"]), ("path", node["path"])), "element id"))
+        if node["tag"] in HEADINGS:
+            title = text[node["start"]:node["end"]].strip()
+            match = NUMBERED.match(title)
+            observations.append(_observation(sha, ObservationKind.HEADING, rep, base + node["start"], base + node["end"],
+                                             (("level", HEADINGS[node["tag"]]), ("number", match.group("number") if match else ""),
+                                              ("title", match.group("title") if match else title)), f"{node['tag']} heading"))
+    for target, position in parser.links:
+        observations.append(_observation(sha, ObservationKind.REFERENCE, rep, base + position, base + position,
+                                         (("kind", "label"), ("number", target)), "same-document link", 0.9))
+    return observations
 
 
 def _package_document(into: Path, members: Collection[str]) -> tuple[PurePosixPath, ET.Element]:
