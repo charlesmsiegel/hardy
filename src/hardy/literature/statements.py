@@ -35,36 +35,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from hardy.documents import completion
+from hardy.literature.statement_kinds import ENVIRONMENT_ALIASES, INVENTORY_KINDS
 
 #: What a paper calls something it asserts. Deliberately wider than
 #: `completion.theorem_environments`, which asks what a *writeup* reports:
 #: here the question is what a reader would go looking for, and a paper's key
 #: input is as often a proposition or a definition as a theorem.
-KINDS = (
-    "theorem",
-    "lemma",
-    "proposition",
-    "corollary",
-    "definition",
-    "conjecture",
-    "claim",
-    "fact",
-    "assumption",
-    "hypothesis",
-)
+KINDS = INVENTORY_KINDS
 #: Common abbreviations, mapped to the kind they stand for. A paper declares
 #: `\newtheorem{thm}{Theorem}`, and reading its `\newtheorem` lines would be
 #: better -- but a source that `\input`s its preamble from a style file has
 #: none to read, and a statement Hardy cannot see is one nobody can assume.
-ALIASES = {
-    "thm": "theorem",
-    "lem": "lemma",
-    "prop": "proposition",
-    "cor": "corollary",
-    "defn": "definition",
-    "defi": "definition",
-    "conj": "conjecture",
-}
+ALIASES = dict(ENVIRONMENT_ALIASES)
 #: How many statements one paper may contribute. A survey with a thousand
 #: numbered remarks is not a reason to hand a thousand entries to a model.
 MAX_STATEMENTS = 200

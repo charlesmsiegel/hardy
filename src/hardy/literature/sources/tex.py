@@ -27,6 +27,7 @@ from pathlib import Path
 from hardy.documents import completion
 from hardy.foundation.values import json_digest
 from hardy.literature import archives
+from hardy.literature.statement_kinds import ENVIRONMENT_ALIASES, STRUCTURAL_KINDS
 from hardy.literature.statements import AssumeError, root_of
 
 from .adapters import ExtractionBudget, ExtractionRefused, ExtractionResult
@@ -51,9 +52,8 @@ VERSION = "2"
 SOURCES_PAYLOAD = "sources.json"
 MANIFEST_PAYLOAD = "files.json"
 FILE_SEPARATOR = "\f"
-STATEMENT_ENVS = {"theorem", "lemma", "proposition", "corollary", "definition", "claim", "conjecture", "example", "exercise", "remark",
-                  "thm", "lem", "prop", "cor", "defn", "defi", "conj", "construction", "solution"}
-ALIASES = {"thm": "theorem", "lem": "lemma", "prop": "proposition", "cor": "corollary", "defn": "definition", "defi": "definition", "conj": "conjecture"}
+ALIASES = dict(ENVIRONMENT_ALIASES)
+STATEMENT_ENVS = set(STRUCTURAL_KINDS) | set(ALIASES)
 DISPLAY_ENVS = {"equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*", "figure", "figure*", "table", "table*", "tikzcd"}
 BEGIN = re.compile(r"\\begin\{(?P<env>[A-Za-z*]+)\}(?:\[(?P<name>[^\]]*)\])?")
 END = re.compile(r"\\end\{(?P<env>[A-Za-z*]+)\}")
