@@ -48,10 +48,10 @@ class DelegationTree:
         self._cancel_requests = cancel_requests
         self._started: frozenset[str] = frozenset()
 
-    def cancel_requested(self, delegation_id: str) -> bool:
+    def cancel_requested(self, id: str) -> bool:
         """Whether a live node has been asked to stop, without claiming it has stopped."""
-        self.get(delegation_id)
-        return delegation_id in self._cancel_requests
+        self.get(id)
+        return id in self._cancel_requests
 
     @property
     def revision(self) -> int:
@@ -61,31 +61,31 @@ class DelegationTree:
     def roots(self) -> tuple[str, ...]:
         return tuple(d.id for d in self.delegations.values() if d.parent_id is None)
 
-    def get(self, delegation_id: str) -> Delegation:
+    def get(self, id: str) -> Delegation:
         """Resolve a recorded execution identity, refusing an unknown node."""
         try:
-            return self.delegations[delegation_id]
+            return self.delegations[id]
         except KeyError:
-            raise ValueError(f"unknown delegation: {delegation_id}") from None
+            raise ValueError(f"unknown delegation: {id}") from None
 
-    def children(self, delegation_id: str) -> tuple[str, ...]:
+    def children(self, id: str) -> tuple[str, ...]:
         """Direct children in the order the journal created them."""
-        return self.get(delegation_id).children
+        return self.get(id).children
 
-    def descendants(self, delegation_id: str) -> tuple[str, ...]:
+    def descendants(self, id: str) -> tuple[str, ...]:
         """Breadth-first descendants in creation order within each parent."""
         found: list[str] = []
-        pending = list(self.children(delegation_id))
+        pending = list(self.children(id))
         while pending:
             child = pending.pop(0)
             found.append(child)
             pending.extend(self.children(child))
         return tuple(found)
 
-    def ancestors(self, delegation_id: str) -> tuple[str, ...]:
+    def ancestors(self, id: str) -> tuple[str, ...]:
         """The parent first, continuing to the root."""
         chain = []
-        parent = self.get(delegation_id).parent_id
+        parent = self.get(id).parent_id
         while parent is not None:
             chain.append(parent)
             parent = self.get(parent).parent_id

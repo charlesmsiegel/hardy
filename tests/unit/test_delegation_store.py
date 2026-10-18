@@ -58,6 +58,22 @@ def test_child_events_link_parent_and_descendants(tmp_path):
     assert store.tree().revision == 3
 
 
+def test_tree_queries_keep_the_public_id_keyword(tmp_path):
+    store = DelegationStore(tmp_path)
+    _create(store, "root")
+    _create(store, "child", "root")
+    _create(store, "grandchild", "child")
+    store.append("child", "cancel.requested", {"reason": "user"})
+    tree = store.tree()
+
+    assert tree.get(id="child").id == "child"
+    assert tree.children(id="root") == ("child",)
+    assert tree.descendants(id="root") == ("child", "grandchild")
+    assert tree.ancestors(id="grandchild") == ("child", "root")
+    assert tree.cancel_requested(id="child")
+    assert not tree.cancel_requested(id="root")
+
+
 def test_terminal_event_records_result_and_refuses_further_progress(tmp_path):
     store = DelegationStore(tmp_path)
     _create(store, "d-1")
