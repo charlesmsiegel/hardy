@@ -485,6 +485,18 @@ def admit_delegation(admission: AuthoritativeAdmission, delegation_id: str) -> t
     return tuple(outcomes)
 
 
+@dataclass(frozen=True)
+class _AdmissionSelection:
+    """The exact subject and proof work one reconciliation round would establish."""
+
+    records: tuple[LedgerRecord, ...]
+    proof: Obligation | None
+    subject: ProjectItem | None
+    action: Literal["created", "resolved_obligation"]
+    identity_map: tuple[tuple[str, str], ...]
+    near_duplicates: tuple[VersionRef, ...]
+
+
 class AuthoritativeAdmission:
     """Serialized: read head, reconcile, stage, verify, accept, commit files, commit ledger.
 
@@ -528,48 +540,20 @@ class AuthoritativeAdmission:
             return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids, action=action,
                                     reasons=reasons, artifacts=extra)
 
-        primary = next((r for r in candidate.records if isinstance(r, ProjectItem)), None)
-        prove = next((r for r in candidate.records if isinstance(r, Obligation) and r.kind is ObligationKind.PROVE), None)
         with self._lock():
             phase(AdmissionPhase.PROPOSED, self.ledger.read().revision)
             for _round in range(self.rounds):
                 snapshot = self.ledger.read()
                 head = snapshot.revision
-                near: tuple[VersionRef, ...] = ()
-                existing: ProjectItem | None = None
-                if primary is not None and any(record.id == primary.id for record in snapshot.records):
-                    # The same candidate again: its identity is already authoritative.
-                    existing = snapshot.head(primary.id)
-                elif primary is not None:
-                    exact, near = find_duplicates(primary, snapshot)
-                    if exact:
-                        existing = snapshot.get(exact[0])
-                elif candidate.route == "verified_proof" and candidate.subject is not None:
-                    # A proof of an authoritative statement: nothing new is minted,
-                    # the subject's own obligation is what closes.
-                    subject = snapshot.get(candidate.subject)
-                    if not isinstance(subject, ProjectItem) or snapshot.head(subject.id).ref != subject.ref:
-                        return fail(head, "rejected", ("the proof names a subject that is not the current head",))
-                    existing = subject
-                # What this round admits: new records with their own PROVE
-                # obligation, or -- when the statement is already authoritative
-                # but unproved -- nothing new, and the existing obligation closes.
-                records = tuple(candidate.records)
-                target_prove = prove
-                created_ref = primary.ref if primary is not None else None
-                action = "created"
-                if existing is not None:
-                    open_prove = next((o for o in snapshot.current(Obligation)
-                                       if o.item == existing.ref and o.kind is ObligationKind.PROVE
-                                       and o.status is not ObligationStatus.RESOLVED), None)
-                    proof_offered = prove is not None or candidate.route == "verified_proof"
-                    if open_prove is None or not proof_offered or not change_set.files:
-                        phase(AdmissionPhase.COMPLETED, head, f"reused {existing.id}")
-                        return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
-                                                action="reused_existing", authoritative_refs=(existing.ref,),
-                                                identity_map=((primary.id, existing.id),) if primary else (),
-                                                near_duplicates=near)
-                    records, target_prove, created_ref, action = (), open_prove, existing.ref, "resolved_obligation"
+                selected = _select_admission(candidate, change_set, snapshot)
+                if isinstance(selected, AdmissionOutcome):
+                    if selected.action == "rejected":
+                        return fail(head, "rejected", selected.reasons)
+                    phase(AdmissionPhase.COMPLETED, head, f"reused {selected.authoritative_refs[0].id}")
+                    return selected
+                records, target_prove = selected.records, selected.proof
+                created_ref = selected.subject.ref if selected.subject is not None else None
+                action, near = selected.action, selected.near_duplicates
                 plan, conflicts = reconcile(change_set, self.workspace, head_revision=head)
                 if conflicts:
                     artifacts.write_json(PurePosixPath("conflicts.json"), [c.model_dump(mode="json") for c in conflicts])
@@ -580,23 +564,11 @@ class AuthoritativeAdmission:
                 staging = Path(tempfile.mkdtemp(prefix="hardy-admission-"))
                 try:
                     staged = self.workspace.copy_to(staging / "lean", staging / "build")
-                    for change in plan.files:
-                        target = staged.root / PurePosixPath(change.path)
-                        if change.operation == "delete":
-                            target.unlink(missing_ok=True)
-                            staged.forget(change.path.removesuffix(".lean").replace("/", "."))
-                        else:
-                            target.parent.mkdir(parents=True, exist_ok=True)
-                            # Normalised and pinned to "\n" here, in the staged
-                            # copy that gets built and audited, so that what is
-                            # verified is byte-for-byte what `_commit_files`
-                            # (through `guard.write_text`) then commits -- not a
-                            # platform-translated cousin of it (#366).
-                            target.write_text(normalize_newlines(change.content or ""), encoding="utf-8", newline="\n")
+                    _stage_files(staged, plan)
                     phase(AdmissionPhase.FILES_PREPARED, head)
                     if target_prove is None:
                         return fail(head, "rejected", ("no proof obligation to discharge on this candidate",))
-                    subject_item = existing if existing is not None else primary
+                    subject_item = selected.subject
                     request = VerificationRequest(files=tuple(f.path for f in plan.files), candidate_id=candidate.id,
                                                   change_set_id=plan.id,
                                                   subject_name=subject_item.name if subject_item else None,
@@ -612,15 +584,9 @@ class AuthoritativeAdmission:
                     proposal = Resolution(id=f"{attempt_id}:resolution", obligation=target_prove.ref,
                                           item=target_prove.item, evidence=tuple(evidence),
                                           explanation=detail or "admitted on the current head")
-                    receipt = self._decide(with_records, proposal)
-                    if receipt is None:
-                        return fail(head, "rejected", ("acceptance decision unavailable",))
-                    try:
-                        accepted = self.policy.accept(with_records, proposal, receipt)
-                    except ValueError as error:
-                        return fail(head, "rejected", (f"acceptance refused: {error}",))
-                    closed = Obligation.model_validate({**target_prove.model_dump(), "previous": target_prove.ref,
-                                                        "status": "resolved", "resolution": accepted})
+                    closed = self._accept_proposal(with_records, proposal, target_prove)
+                    if isinstance(closed, str):
+                        return fail(head, "rejected", (closed,))
                     # Journaled before the first write: a crash mid-mutation leaves a
                     # tree that is half the proposal, and recovery must know to look.
                     phase(AdmissionPhase.FILES_COMMITTING, head)
@@ -629,35 +595,56 @@ class AuthoritativeAdmission:
                     except OSError as error:
                         return fail(head, "conflicted", (f"file publication failed; inspect the admission attempt journal: {error}",))
                     phase(AdmissionPhase.FILES_COMMITTED, head)
-                    try:
-                        # Two transactions by the ledger's own contract: an obligation is
-                        # created open, and its resolution pins that stored revision. An
-                        # obligation that already exists closes in one.
-                        revision = head
-                        if records:
-                            revision = self.ledger.append(records, expected_revision=head,
-                                                          validate=self.policy.validate).revision
-                        self.ledger.append((closed,), expected_revision=revision, validate=self.policy.validate)
-                    except ValueError as error:
-                        # Files landed, the ledger did not: incomplete, recoverable, never a success.
-                        event = self.store.append(delegation_id, "admission.incomplete",
-                                                  {"attempt": attempt_id, "phase": AdmissionPhase.FILES_COMMITTED.value,
-                                                   "error": str(error)})
-                        inbox = AttentionInbox(self.store)
-                        item = inbox.derive(event, self.store.tree())
-                        if item is not None:
-                            inbox.record(item)
-                        return fail(head, "conflicted", (f"ledger commit failed after files were committed: {error}",))
+                    problem = self._append_verified(records, closed, head, delegation_id, attempt_id)
+                    if problem is not None:
+                        return fail(head, "conflicted", (problem,))
                     phase(AdmissionPhase.LEDGER_COMMITTED, head)
                     phase(AdmissionPhase.COMPLETED, head)
                     return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
                                             action=action, authoritative_refs=(created_ref,) if created_ref else (),
-                                            identity_map=((primary.id, created_ref.id),) if existing and primary else (),
+                                            identity_map=selected.identity_map,
                                             near_duplicates=near, artifacts=tuple(f.path for f in plan.files))
                 finally:
                     shutil.rmtree(staging, ignore_errors=True)
             return fail(self.ledger.read().revision, "rejected",
                         (f"the project head kept moving; gave up after {self.rounds} reconciliations",))
+
+    def _accept_proposal(self, snapshot: LedgerSnapshot, proposal: Resolution,
+                         target_prove: Obligation) -> Obligation | str:
+        """Only authenticated ledger policy can close the exact verified proof obligation."""
+        receipt = self._decide(snapshot, proposal)
+        if receipt is None:
+            return "acceptance decision unavailable"
+        try:
+            accepted = self.policy.accept(snapshot, proposal, receipt)
+        except ValueError as error:
+            return f"acceptance refused: {error}"
+        return Obligation.model_validate({**target_prove.model_dump(), "previous": target_prove.ref,
+                                            "status": "resolved", "resolution": accepted})
+
+    def _append_verified(self, records: tuple[LedgerRecord, ...], closed: Obligation, head: int,
+                          delegation_id: str, attempt_id: str) -> str | None:
+        """Commit open records then their exact closure, recording any post-file incomplete admission."""
+        try:
+            # Two transactions by the ledger's own contract: an obligation is
+            # created open, and its resolution pins that stored revision. An
+            # obligation that already exists closes in one.
+            revision = head
+            if records:
+                revision = self.ledger.append(records, expected_revision=head,
+                                              validate=self.policy.validate).revision
+            self.ledger.append((closed,), expected_revision=revision, validate=self.policy.validate)
+        except ValueError as error:
+            # Files landed, the ledger did not: incomplete, recoverable, never a success.
+            event = self.store.append(delegation_id, "admission.incomplete",
+                                      {"attempt": attempt_id, "phase": AdmissionPhase.FILES_COMMITTED.value,
+                                       "error": str(error)})
+            inbox = AttentionInbox(self.store)
+            item = inbox.derive(event, self.store.tree())
+            if item is not None:
+                inbox.record(item)
+            return f"ledger commit failed after files were committed: {error}"
+        return None
 
     def _commit_files(self, staged: LeanWorkspace, plan: ChangeSet) -> None:
         before = {change.path: self.workspace.read(PurePosixPath(change.path)) for change in plan.files}
@@ -705,3 +692,74 @@ class AuthoritativeAdmission:
                 if item is not None:
                     inbox.record(item)
         return tuple(incomplete)
+
+
+def _select_admission(candidate: AdmissionCandidate, change_set: ChangeSet,
+                       snapshot: LedgerSnapshot) -> _AdmissionSelection | AdmissionOutcome:
+    """Reuse established identity, or select its still-open proof obligation without minting a duplicate."""
+    primary = next((r for r in candidate.records if isinstance(r, ProjectItem)), None)
+    prove = next((r for r in candidate.records if isinstance(r, Obligation) and r.kind is ObligationKind.PROVE), None)
+    near: tuple[VersionRef, ...] = ()
+    existing: ProjectItem | None = None
+    if primary is not None:
+        existing, near = _existing_admission_subject(snapshot, primary)
+    elif candidate.route == "verified_proof" and candidate.subject is not None:
+        # A proof of an authoritative statement: nothing new is minted,
+        # the subject's own obligation is what closes.
+        subject = snapshot.get(candidate.subject)
+        if not isinstance(subject, ProjectItem) or snapshot.head(subject.id).ref != subject.ref:
+            return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
+                                    action="rejected", reasons=("the proof names a subject that is not the current head",))
+        existing = subject
+    # What this round admits: new records with their own PROVE
+    # obligation, or -- when the statement is already authoritative
+    # but unproved -- nothing new, and the existing obligation closes.
+    records = tuple(candidate.records)
+    target_prove = prove
+    created_ref = primary.ref if primary is not None else None
+    action = "created"
+    if existing is not None:
+        open_prove = _open_proof(snapshot, existing)
+        proof_offered = prove is not None or candidate.route == "verified_proof"
+        if open_prove is None or not proof_offered or not change_set.files:
+            return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
+                                    action="reused_existing", authoritative_refs=(existing.ref,),
+                                    identity_map=((primary.id, existing.id),) if primary else (),
+                                    near_duplicates=near)
+        records, target_prove, created_ref, action = (), open_prove, existing.ref, "resolved_obligation"
+    subject_item = existing if existing is not None else primary
+    return _AdmissionSelection(records, target_prove, subject_item, action,
+                                ((primary.id, created_ref.id),) if existing and primary else (), near)
+
+
+def _stage_files(staged: LeanWorkspace, plan: ChangeSet) -> None:
+    """Apply reconciled changes only to the scratch workspace that will be verified."""
+    for change in plan.files:
+        target = staged.root / PurePosixPath(change.path)
+        if change.operation == "delete":
+            target.unlink(missing_ok=True)
+            staged.forget(change.path.removesuffix(".lean").replace("/", "."))
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Normalised and pinned to "\n" here, in the staged
+            # copy that gets built and audited, so that what is
+            # verified is byte-for-byte what `_commit_files`
+            # (through `guard.write_text`) then commits -- not a
+            # platform-translated cousin of it (#366).
+            target.write_text(normalize_newlines(change.content or ""), encoding="utf-8", newline="\n")
+
+
+def _existing_admission_subject(snapshot: LedgerSnapshot, primary: ProjectItem
+                                 ) -> tuple[ProjectItem | None, tuple[VersionRef, ...]]:
+    """Prefer an already-authoritative identity, then an exact structural duplicate."""
+    if any(record.id == primary.id for record in snapshot.records):
+        return snapshot.head(primary.id), ()
+    exact, near = find_duplicates(primary, snapshot)
+    return (snapshot.get(exact[0]) if exact else None), near
+
+
+def _open_proof(snapshot: LedgerSnapshot, existing: ProjectItem) -> Obligation | None:
+    """Find the current unresolved proof work for this exact authoritative statement."""
+    return next((o for o in snapshot.current(Obligation)
+                       if o.item == existing.ref and o.kind is ObligationKind.PROVE
+                       and o.status is not ObligationStatus.RESOLVED), None)
