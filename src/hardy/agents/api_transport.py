@@ -167,32 +167,26 @@ class ApiProvider:
             self._settle(reservation, dict.fromkeys(COUNTERS, 0) if self._rejected(error) else None)
             raise
 
-    def _retry_delay(self, error: Exception, attempt: int, timeout: float | None, started: float) -> float | None:
-        """How long to back off before the next attempt, or None when this failure is final.
+    def _backoff(self, error: Exception, attempt: int, timeout: float | None, started: float) -> bool:
+        """Record and wait for an eligible retry; decline it if the wait expires.
 
         Final when the attempts are spent, when the failure is not a transient
         status or a dropped connection, or when the back-off -- the provider's
         `retry-after` where it is longer -- would reach the deadline.
+
+        Check both before and after sleeping: the clock can advance farther
+        than the requested sleep.
         """
         status = getattr(error, "status_code", None)
         connection = any(cls.__name__ == "APIConnectionError" for cls in type(error).__mro__)
         if attempt == ATTEMPTS - 1 or not (status in RETRIED_STATUSES or connection):
-            return None
+            return False
         delay = float(2 ** attempt)
         headers = getattr(getattr(error, "response", None), "headers", {})
         with contextlib.suppress(ValueError, TypeError):
             delay = max(delay, float(headers.get("retry-after", 0)))
         remaining = self._remaining(timeout, started)
-        return None if remaining is not None and delay >= remaining else delay
-
-    def _backoff(self, error: Exception, attempt: int, timeout: float | None, started: float) -> bool:
-        """Record and wait for an eligible retry; decline it if the wait expires.
-
-        The delay is checked both before and after sleeping, because a clock
-        can advance farther than the requested sleep.
-        """
-        delay = self._retry_delay(error, attempt, timeout, started)
-        if delay is None:
+        if remaining is not None and delay >= remaining:
             return False
         self.observe({"type": "provider_retry", "status": getattr(error, "status_code", None),
                       "attempt": attempt + 1, "sleep": delay})
