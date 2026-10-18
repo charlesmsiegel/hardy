@@ -20,6 +20,7 @@ import posixpath
 import re
 import tempfile
 import xml.etree.ElementTree as ET
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
@@ -123,11 +124,7 @@ class _Blocks(HTMLParser):
         counts[tag] = counts.get(tag, 0) + 1
         attributes = dict(attrs)
         if tag in VOID:
-            if attributes.get("id"):
-                self.nodes.append({"path": f"{self._path()}/{tag}[{counts[tag]}]".lstrip("/"), "tag": tag,
-                                   "id": attributes["id"], "start": self.length, "end": self.length, "depth": len(self.stack) + 1})
-            if tag == "br" and not self.skipping and self.math is None:
-                self._emit("\n")
+            self._void_element(tag, attributes, counts[tag])
             return
         self.stack.append((tag, counts[tag]))
         self.counts.append({})
@@ -139,18 +136,34 @@ class _Blocks(HTMLParser):
             return
         if self.skipping:
             return
-        if tag == "math" and self.math is None:
-            self.math = {"depth": len(self.stack), "tokens": [], "tex": [], "annotation_depth": None, "annotation_chunks": []}
-            self._diagnose("mathml_rendered_as_text", "MathML is linearized as token text or its TeX annotation; original markup is retained", "info")
-            return
-        if self.math is not None:
-            if (tag == "annotation" and not self.active.get("annotation-xml") and not self.math["tex"]
-                    and self.math["annotation_depth"] is None
-                    and attributes.get("encoding", "").lower() in {"application/x-tex", "application/x-latex"}):
-                self.math["annotation_depth"] = len(self.stack)
+        if self._math_element(tag, attributes):
             return
         if tag == "a" and attributes.get("href", "").startswith("#"):
             self.links.append((attributes["href"][1:], self.length))
+        self._open_block(tag, attributes)
+
+    def _void_element(self, tag: str, attributes: dict[str, str | None], index: int) -> None:
+        if attributes.get("id"):
+            self.nodes.append({"path": f"{self._path()}/{tag}[{index}]".lstrip("/"), "tag": tag,
+                               "id": attributes["id"], "start": self.length, "end": self.length, "depth": len(self.stack) + 1})
+        if tag == "br" and not self.skipping and self.math is None:
+            self._emit("\n")
+
+    def _math_element(self, tag: str, attributes: dict[str, str | None]) -> bool:
+        """Whether this opening belongs to the active MathML reading rather than an ordinary block."""
+        if self.math is None:
+            if tag != "math":
+                return False
+            self.math = {"depth": len(self.stack), "tokens": [], "tex": [], "annotation_depth": None, "annotation_chunks": []}
+            self._diagnose("mathml_rendered_as_text", "MathML is linearized as token text or its TeX annotation; original markup is retained", "info")
+            return True
+        if (tag == "annotation" and not self.active.get("annotation-xml") and not self.math["tex"]
+                and self.math["annotation_depth"] is None
+                and attributes.get("encoding", "").lower() in {"application/x-tex", "application/x-latex"}):
+            self.math["annotation_depth"] = len(self.stack)
+        return True
+
+    def _open_block(self, tag: str, attributes: dict[str, str | None]) -> None:
         if tag in BLOCKS or attributes.get("id"):
             if self.length and not self.text[-1].endswith("\n"):
                 self.text.append("\n")
@@ -301,7 +314,6 @@ class EpubAdapter:
                                 observations=tuple(observations), metadata=metadata, diagnostics=tuple(diagnostics))
 
     def _spine(self, data: bytes) -> tuple[list[tuple[str, str]], tuple[tuple[str, str], ...], list[Diagnostic]]:
-        diagnostics: list[Diagnostic] = []
         with tempfile.TemporaryDirectory(prefix="hardy-epub-") as temporary:
             into = Path(temporary)
             try:
@@ -309,50 +321,69 @@ class EpubAdapter:
             except archives.ArchiveError as error:
                 raise ExtractionRefused(f"the EPUB was refused: {error}") from error
             members = {f.path: f for f in extraction.files}
-            if "META-INF/container.xml" not in members:
-                raise ExtractionRefused("the EPUB has no META-INF/container.xml")
-            container = _parse_xml((into / "META-INF/container.xml").read_bytes(), "container.xml")
-            rootfile = container.find(".//c:rootfile", NS)
-            if rootfile is None or not rootfile.get("full-path"):
-                raise ExtractionRefused("the EPUB container names no package document")
-            try:
-                opf_path = PurePosixPath(_archive_url(rootfile.get("full-path"), "."))
-            except ValueError as error:
-                raise ExtractionRefused(f"invalid package document path: {error}") from error
-            if opf_path.as_posix() not in members:
-                raise ExtractionRefused(f"the package document {opf_path} is not in the archive")
-            package = _parse_xml((into / opf_path).read_bytes(), "the package document")
-            manifest = {item.get("id"): (item.get("href"), item.get("media-type", "")) for item in package.findall(".//opf:manifest/opf:item", NS)}
-            spine = [ref.get("idref") for ref in package.findall(".//opf:spine/opf:itemref", NS)]
-            items: list[tuple[str, str]] = []
-            for idref in spine:
-                href, media = manifest.get(idref, (None, ""))
-                if href is None:
-                    diagnostics.append(Diagnostic(code="spine_item_missing", detail=f"spine names {idref!r}, absent from the manifest", severity="warning"))
-                    continue
-                try:
-                    relative = _archive_url(href, opf_path.parent.as_posix())
-                except ValueError as error:
-                    diagnostics.append(Diagnostic(code="spine_item_unreadable", detail=f"{href}: {error}", severity="warning"))
-                    continue
-                if relative not in members or not members[relative].text:
-                    diagnostics.append(Diagnostic(code="spine_item_unreadable", detail=f"{relative} is missing or not text", severity="warning"))
-                    continue
-                items.append((relative, (into / relative).read_bytes().decode("utf-8", errors="replace")))
-            metadata = []
-            for tag, key in (("title", "title"), ("creator", "author"), ("identifier", "identifier"), ("publisher", "venue"), ("date", "year")):
-                element = package.find(f".//opf:metadata/dc:{tag}", NS)
-                if element is not None and element.text and element.text.strip():
-                    value = element.text.strip()
-                    if key == "identifier" and re.search(r"isbn", value, re.I):
-                        metadata.append(("isbn", re.sub(r"(?i)^urn:isbn:", "", value)))
-                    elif key == "identifier":
-                        continue
-                    elif key == "year":
-                        metadata.append(("year", value[:4]))
-                    else:
-                        metadata.append((key, value))
-        return items, tuple(metadata), diagnostics
+            opf_path, package = _package_document(into, members)
+            items, diagnostics = _spine_items(into, opf_path, package, members)
+            metadata = _package_metadata(package)
+        return items, metadata, diagnostics
+
+
+def _package_document(into: Path, members: Collection[str]) -> tuple[PurePosixPath, ET.Element]:
+    """The container's declared package, after archive-relative path and XML checks."""
+    if "META-INF/container.xml" not in members:
+        raise ExtractionRefused("the EPUB has no META-INF/container.xml")
+    container = _parse_xml((into / "META-INF/container.xml").read_bytes(), "container.xml")
+    rootfile = container.find(".//c:rootfile", NS)
+    if rootfile is None or not rootfile.get("full-path"):
+        raise ExtractionRefused("the EPUB container names no package document")
+    try:
+        opf_path = PurePosixPath(_archive_url(rootfile.get("full-path"), "."))
+    except ValueError as error:
+        raise ExtractionRefused(f"invalid package document path: {error}") from error
+    if opf_path.as_posix() not in members:
+        raise ExtractionRefused(f"the package document {opf_path} is not in the archive")
+    return opf_path, _parse_xml((into / opf_path).read_bytes(), "the package document")
+
+
+def _spine_items(
+    into: Path, opf_path: PurePosixPath, package: ET.Element, members: Mapping[str, archives.ExtractedFile],
+) -> tuple[list[tuple[str, str]], list[Diagnostic]]:
+    """Readable declared items in spine order, with each unreadable item disclosed."""
+    manifest = {item.get("id"): (item.get("href"), item.get("media-type", "")) for item in package.findall(".//opf:manifest/opf:item", NS)}
+    spine = [ref.get("idref") for ref in package.findall(".//opf:spine/opf:itemref", NS)]
+    items: list[tuple[str, str]] = []
+    diagnostics: list[Diagnostic] = []
+    for idref in spine:
+        href, media = manifest.get(idref, (None, ""))
+        if href is None:
+            diagnostics.append(Diagnostic(code="spine_item_missing", detail=f"spine names {idref!r}, absent from the manifest", severity="warning"))
+            continue
+        try:
+            relative = _archive_url(href, opf_path.parent.as_posix())
+        except ValueError as error:
+            diagnostics.append(Diagnostic(code="spine_item_unreadable", detail=f"{href}: {error}", severity="warning"))
+            continue
+        if relative not in members or not members[relative].text:
+            diagnostics.append(Diagnostic(code="spine_item_unreadable", detail=f"{relative} is missing or not text", severity="warning"))
+            continue
+        items.append((relative, (into / relative).read_bytes().decode("utf-8", errors="replace")))
+    return items, diagnostics
+
+
+def _package_metadata(package: ET.Element) -> tuple[tuple[str, str], ...]:
+    metadata = []
+    for tag, key in (("title", "title"), ("creator", "author"), ("identifier", "identifier"), ("publisher", "venue"), ("date", "year")):
+        element = package.find(f".//opf:metadata/dc:{tag}", NS)
+        if element is not None and element.text and element.text.strip():
+            value = element.text.strip()
+            if key == "identifier" and re.search(r"isbn", value, re.I):
+                metadata.append(("isbn", re.sub(r"(?i)^urn:isbn:", "", value)))
+            elif key == "identifier":
+                continue
+            elif key == "year":
+                metadata.append(("year", value[:4]))
+            else:
+                metadata.append((key, value))
+    return tuple(metadata)
 
 
 def _archive_url(href: str, base: str) -> str:
