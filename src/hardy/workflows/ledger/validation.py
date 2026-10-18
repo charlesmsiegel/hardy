@@ -2,7 +2,7 @@
 
 An atomic batch may contain mutually owned context/declaration records. Exact
 references must resolve across the resulting snapshot; immutable local context
-identities may only be extended through children. Evidence is authenticated by B2.
+identities may only be extended through children. Ledger policy authenticates evidence separately.
 """
 from __future__ import annotations
 
@@ -56,54 +56,77 @@ def validate_records(before: LedgerLookup, after: LedgerLookup,
             after.get(ref)
         old = before.head_or_none(record.id)
         if old:
-            if type(old) is not type(record):
-                raise ValueError("record identity cannot change category")
-            if old == record:
-                raise ValueError("duplicate record revision")
-            if isinstance(record, MathematicalContext | ScopedBinding) or (
-                isinstance(record, ProjectItem) and record.kind == ProjectItemKind.DECLARATION
-            ):
-                raise ValueError("mathematical contexts, declarations and bindings are immutable")
-            if isinstance(old, ProjectItem) and old.kind != record.kind:
-                raise ValueError("project item identity cannot change kind")
-            if isinstance(old, ProjectItem):
-                if old.context != record.context:
-                    raise ValueError("item context is immutable; create a distinct claim")
-                if old.kind == ProjectItemKind.CONJECTURE and old.statement != record.statement:
-                    raise ValueError("corrected conjecture must be a new superseding item")
+            _validate_revision(old, record)
         if isinstance(record, Obligation):
-            if record.previous != (old.ref if old else None):
-                raise ValueError("obligation previous must name its current predecessor")
-            if not isinstance(after.get(record.item), ProjectItem):
-                raise ValueError("obligation item reference must name a project item")
-            if after.get(record.scope.ref) != record.scope:
-                raise ValueError("obligation scope reference is not stored")
-            if record.context is not None and not isinstance(after.get(record.context), MathematicalContext):
-                raise ValueError("obligation context reference must name a mathematical context")
-            if old and (old.item != record.item or old.kind != record.kind or old.context != record.context):
-                raise ValueError("obligation revisions must preserve their subject, kind and context")
-        if isinstance(record, Resolution):
-            obligation = after.get(record.obligation)
-            if not isinstance(obligation, Obligation) or obligation.item != record.item:
-                raise ValueError("resolution must reference its exact obligation subject")
-        if (isinstance(record, ProjectItem) and record.context is not None
-                and not isinstance(after.get(record.context), MathematicalContext)):
-            raise ValueError("item context reference must name a mathematical context")
-        if isinstance(record, MathematicalContext):
-            _context(after, record)
-        if isinstance(record, ScopedBinding):
-            owner = after.head(record.context_id)
-            if not isinstance(owner, MathematicalContext) or record.ref not in owner.bindings:
-                raise ValueError("binding must belong to its owning context")
-        if isinstance(record, ProjectItem) and record.declaration:
-            owner = after.head(record.declaration.context_id)
-            if not isinstance(owner, MathematicalContext) or record.ref not in owner.declarations:
-                raise ValueError("declaration must belong to its owning context")
+            _validate_obligation(after, record, old)
+        _validate_ownership(after, record)
     if after.active_context is not None and not isinstance(after.get(after.active_context), MathematicalContext):
         raise ValueError("active context reference must name a mathematical context")
 
 
+def _validate_revision(old: LedgerRecord, record: LedgerRecord) -> None:
+    """A revision preserves category, immutable declarations and mathematical identity."""
+    if type(old) is not type(record):
+        raise ValueError("record identity cannot change category")
+    if old == record:
+        raise ValueError("duplicate record revision")
+    if isinstance(record, MathematicalContext | ScopedBinding) or (
+        isinstance(record, ProjectItem) and record.kind == ProjectItemKind.DECLARATION
+    ):
+        raise ValueError("mathematical contexts, declarations and bindings are immutable")
+    if isinstance(old, ProjectItem) and old.kind != record.kind:
+        raise ValueError("project item identity cannot change kind")
+    if isinstance(old, ProjectItem):
+        if old.context != record.context:
+            raise ValueError("item context is immutable; create a distinct claim")
+        if old.kind == ProjectItemKind.CONJECTURE and old.statement != record.statement:
+            raise ValueError("corrected conjecture must be a new superseding item")
+
+
+def _validate_obligation(after: LedgerLookup, record: Obligation, old: LedgerRecord | None) -> None:
+    """Pin predecessor, subject, context and scope to the resulting atomic snapshot."""
+    if record.previous != (old.ref if old else None):
+        raise ValueError("obligation previous must name its current predecessor")
+    if not isinstance(after.get(record.item), ProjectItem):
+        raise ValueError("obligation item reference must name a project item")
+    if after.get(record.scope.ref) != record.scope:
+        raise ValueError("obligation scope reference is not stored")
+    if record.context is not None and not isinstance(after.get(record.context), MathematicalContext):
+        raise ValueError("obligation context reference must name a mathematical context")
+    if old and (old.item != record.item or old.kind != record.kind or old.context != record.context):
+        raise ValueError("obligation revisions must preserve their subject, kind and context")
+
+
+def _validate_ownership(after: LedgerLookup, record: LedgerRecord) -> None:
+    """Check resolution subjects and both directions of context ownership."""
+    if isinstance(record, Resolution):
+        obligation = after.get(record.obligation)
+        if not isinstance(obligation, Obligation) or obligation.item != record.item:
+            raise ValueError("resolution must reference its exact obligation subject")
+    if (isinstance(record, ProjectItem) and record.context is not None
+            and not isinstance(after.get(record.context), MathematicalContext)):
+        raise ValueError("item context reference must name a mathematical context")
+    if isinstance(record, MathematicalContext):
+        _context(after, record)
+    if isinstance(record, ScopedBinding):
+        owner = after.head(record.context_id)
+        if not isinstance(owner, MathematicalContext) or record.ref not in owner.bindings:
+            raise ValueError("binding must belong to its owning context")
+    if isinstance(record, ProjectItem) and record.declaration:
+        owner = after.head(record.declaration.context_id)
+        if not isinstance(owner, MathematicalContext) or record.ref not in owner.declarations:
+            raise ValueError("declaration must belong to its owning context")
+
+
 def _context(snapshot: LedgerLookup, context: MathematicalContext) -> None:
+    lineage = _context_lineage(snapshot, context)
+    visible = {ref for c in lineage for ref in (*c.declarations, *c.bindings)}
+    symbols = _context_declarations(snapshot, context, visible)
+    _context_bindings(snapshot, context, visible, symbols)
+
+
+def _context_lineage(snapshot: LedgerLookup, context: MathematicalContext) -> list[MathematicalContext]:
+    """Walk exact parents, refusing cycles and non-context ancestors."""
     lineage = []
     cursor = context
     while True:
@@ -116,7 +139,12 @@ def _context(snapshot: LedgerLookup, context: MathematicalContext) -> None:
         if not isinstance(parent, MathematicalContext):
             raise ValueError("context parent reference must name a context")
         cursor = parent
-    visible = {ref for c in lineage for ref in (*c.declarations, *c.bindings)}
+    return lineage
+
+
+def _context_declarations(snapshot: LedgerLookup, context: MathematicalContext,
+                          visible: set[VersionRef]) -> set[str]:
+    """Validate declaration ownership and visibility, reserving printed symbols."""
     symbols: set[str] = set()
     for ref in context.declarations:
         declaration = snapshot.get(ref)
@@ -132,6 +160,12 @@ def _context(snapshot: LedgerLookup, context: MathematicalContext) -> None:
             target = snapshot.get(dependency)
             if (isinstance(target, ScopedBinding) or isinstance(target, ProjectItem) and target.declaration) and dependency not in visible:
                 raise ValueError("declaration dependency is outside mathematical context")
+    return symbols
+
+
+def _context_bindings(snapshot: LedgerLookup, context: MathematicalContext,
+                      visible: set[VersionRef], symbols: set[str]) -> None:
+    """Bindings share the context's symbol namespace and visible dependency rule."""
     for ref in context.bindings:
         binding = snapshot.get(ref)
         if not isinstance(binding, ScopedBinding) or binding.context_id != context.id:

@@ -112,32 +112,8 @@ class LedgerStore:
         for sequence, name in enumerate(events, 1):
             if name != f"{sequence:020d}.json":
                 raise ValueError("ledger event sequence gap or invalid filename")
-            with guard.open(name, "r", encoding="utf-8") as handle:
-                event = json.load(handle)
-            if not isinstance(event, dict) or set(event) != {
-                "schema", "sequence", "previous", "records", "activate", "digest"
-            }:
-                raise ValueError("invalid ledger transaction envelope")
-            if event["schema"] != SCHEMA:
-                raise ValueError("unsupported ledger schema")
-            payload = {k: v for k, v in event.items() if k != "digest"}
-            if event["digest"] != json_digest(payload):
-                raise ValueError("ledger transaction content digest mismatch")
-            if type(event["sequence"]) is not int or event["sequence"] != sequence or event["previous"] != previous_digest:
-                raise ValueError("ledger transaction history mismatch")
-            if not isinstance(event["records"], list):
-                raise ValueError("ledger records must be a list")
-            records = []
-            for entry in event["records"]:
-                if not isinstance(entry, dict) or set(entry) != {"type", "value", "ref"}:
-                    raise ValueError("invalid ledger record envelope")
-                record_type = RECORD_TYPES.get(entry["type"])
-                if record_type is None:
-                    raise ValueError("unsupported ledger record schema")
-                record = record_type.model_validate(entry["value"])
-                if record.ref != VersionRef.model_validate(entry["ref"]):
-                    raise ValueError("ledger record reference digest mismatch")
-                records.append(record)
+            event = _read_transaction(guard, name, sequence, previous_digest)
+            records = _read_records(event["records"])
             next_active = active if event["activate"] is None else VersionRef.model_validate(event["activate"])
             for record in records:
                 if record.id in owned:
@@ -190,3 +166,40 @@ class LedgerStore:
             content = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
             guard.write_bytes(f"{after.revision:020d}.json", content)
             return after
+
+
+def _read_transaction(guard: WriteGuard, name: str, sequence: int,
+                      previous_digest: str | None) -> dict:
+    """Authenticate the unchanged ledger envelope and chain before reading records."""
+    with guard.open(name, "r", encoding="utf-8") as handle:
+        event = json.load(handle)
+    if not isinstance(event, dict) or set(event) != {
+        "schema", "sequence", "previous", "records", "activate", "digest"
+    }:
+        raise ValueError("invalid ledger transaction envelope")
+    if event["schema"] != SCHEMA:
+        raise ValueError("unsupported ledger schema")
+    payload = {k: v for k, v in event.items() if k != "digest"}
+    if event["digest"] != json_digest(payload):
+        raise ValueError("ledger transaction content digest mismatch")
+    if type(event["sequence"]) is not int or event["sequence"] != sequence or event["previous"] != previous_digest:
+        raise ValueError("ledger transaction history mismatch")
+    return event
+
+
+def _read_records(entries: object) -> list[LedgerRecord]:
+    """Decode exact record types and verify each recorded reference digest."""
+    if not isinstance(entries, list):
+        raise ValueError("ledger records must be a list")
+    records = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"type", "value", "ref"}:
+            raise ValueError("invalid ledger record envelope")
+        record_type = RECORD_TYPES.get(entry["type"])
+        if record_type is None:
+            raise ValueError("unsupported ledger record schema")
+        record = record_type.model_validate(entry["value"])
+        if record.ref != VersionRef.model_validate(entry["ref"]):
+            raise ValueError("ledger record reference digest mismatch")
+        records.append(record)
+    return records
