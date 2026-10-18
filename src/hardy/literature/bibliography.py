@@ -54,7 +54,7 @@ from hardy.documents.syntax import typeset, unfinished_definition
 from hardy.foundation.files import LayoutError, WriteGuard, portable_key, read_text
 from hardy.foundation.locking import FileLock, LockTimeout, LockUnavailable
 from hardy.foundation.values import FrozenModel
-from hardy.literature.metadata import ArxivError, PaperRecord, parse_id
+from hardy.literature.metadata import ArxivError, PaperRecord, parse_id, publication_year
 from hardy.literature.sources.contracts import BibliographicWork, EditionOrVersion
 from hardy.workflows.layout import LOCAL_DIR
 
@@ -420,13 +420,13 @@ def base_year(record: PaperRecord) -> str:
     carries one -- `2401.12345` -- but `2401` is a year and a month glued
     together, and a key reading `perelman2401entropy` names no year at all.
     """
-    return _year(record.published or record.updated or "")
+    return publication_year(record)
 
 
 def _stem(authors: tuple[str, ...], year: str, title: str, fallback: str) -> str:
     """Author, year and first real title word: the readable half of a key."""
     author = ""
-    if authors:
+    if authors and authors[0].strip():
         # The surname, for a name written either way round: "Grigori
         # Perelman" and "Perelman, Grigori" are the same person and must not
         # be two keys.
@@ -453,7 +453,8 @@ def base_key(record: PaperRecord) -> str:
     Not a key on its own -- two papers can want the same one. `cite_key` adds
     what makes it unique.
     """
-    return _stem(record.authors, base_year(record), record.title, record.arxiv_id)
+    identity = citation_identity(identities_of(record))
+    return _stem(record.authors, base_year(record), record.title, identity.partition(":")[2])
 
 
 def edition_base_key(work: BibliographicWork, edition: EditionOrVersion) -> str:

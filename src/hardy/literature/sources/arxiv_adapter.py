@@ -17,7 +17,13 @@ import re
 
 from hardy.foundation.files import read_bytes
 from hardy.literature.library import PaperLibrary
-from hardy.literature.metadata import SOURCE_ARCHIVE, SOURCE_DIR, ArxivId, PaperRecord
+from hardy.literature.metadata import (
+    SOURCE_ARCHIVE,
+    SOURCE_DIR,
+    ArxivId,
+    PaperRecord,
+    publication_year,
+)
 
 from .artifacts import ImportRequest
 from .catalog import CatalogError
@@ -53,7 +59,7 @@ def catalog_records(record: PaperRecord) -> tuple[BibliographicWork, EditionOrVe
     identifiers = [("arxiv", str(identifier))]
     if record.doi:
         identifiers.append(("doi", record.doi.strip().lower()))
-    year = record.published[:4] if record.published[:4].isdigit() else None
+    year = publication_year(record) or None
     edition = EditionOrVersion(id=edition_id(identifier), work=work.id, label=f"arXiv {identifier}", venue="arXiv", year=year,
                                identifiers=tuple(identifiers), assertions=tuple(a for a in assertions if a.field == "published"))
     return work, edition
