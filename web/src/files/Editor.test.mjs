@@ -36,6 +36,7 @@ test.beforeEach(async () => {
   await draw();
 });
 test('dirty buffer survives disk change until explicit reload', async () => {
+  assert.equal(document.querySelector('textarea').getAttribute('aria-label'), 'Edit lean/A.lean');
   await type('my edits');
   await draw({text:'external', sha256:'new'});
   assert.equal(buffer(), 'my edits');

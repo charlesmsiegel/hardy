@@ -38,6 +38,7 @@
 // right while flattening the other eight (`active` included) to grey. See
 // `Pill.jsx`'s `DELEGATION_TONE` for the evidence behind each of the ten.
 
+import {useEffect, useId, useRef, useState} from 'react';
 import Absent, {orAbsent} from '../components/Absent.jsx';
 import Empty from '../components/Empty.jsx';
 import Facts from '../components/Facts.jsx';
@@ -72,13 +73,53 @@ function Loading({label}) {
   return <p className="panel__note">{label}</p>;
 }
 
+// A goal edit is local to this session owner. Refreshes keep the user's
+// buffer; changing project/chat mounts a new form with the reported goal.
+// Request feedback belongs to the submitted draft, never a transcript tail:
+// editing, resubmitting or unmounting retires an outstanding request's reply.
+function GoalForm({goal}) {
+  const {status, send, compose, refusal} = useSession();
+  const inputId = useId();
+  const [text, setText] = useState(goal);
+  const [error, setError] = useState('');
+  const request = useRef(0);
+  useEffect(() => () => { request.current += 1; }, []);
+  const busy = status.turn_running || status.command_running || status.provider_active;
+  const feedback = refusal || error;
+  return (
+    <div className="wb-page-actions">
+      <form data-action="goal" className="wb-page-form" onSubmit={async event => {
+        event.preventDefault();
+        if (busy || !text.trim()) return;
+        const submitted = ++request.current;
+        setError('');
+        const result = await send(`/goal ${text.trim()}`);
+        if (submitted === request.current) setError(result?.error || '');
+      }}>
+        <div className="wb-page-field">
+          <label htmlFor={inputId}>Goal</label>
+          <textarea id={inputId} required value={text} disabled={busy} onChange={event => {
+            request.current += 1;
+            setError('');
+            setText(event.target.value);
+          }} />
+        </div>
+        <button type="submit" className="button" disabled={busy || !text.trim()}>Set goal</button>
+      </form>
+      <button type="button" className="button" onClick={() => compose('/export ')}>Export session…</button>
+      {feedback ? <p role="alert" className="panel__error wb-goal__refusal">{feedback}</p> : null}
+    </div>
+  );
+}
+
 export default function Home() {
-  const {revision} = useSession();
+  const {revision, status} = useSession();
   const [, go] = useHash();
-  const summary = usePanel('/api/summary', revision);
+  const owner = `${status.path}/${status.chat}`;
+  const summary = usePanel('/api/summary', revision, owner);
   const record = usePanel('/api/record', revision);
   const jobs = usePanel('/api/jobs', revision);
-  const chats = usePanel('/api/chats', revision);
+  const chats = usePanel('/api/chats', revision, status.path);
   const environment = usePanel('/api/environment', revision);
 
   const errors = [summary, record, jobs, chats, environment].map((p) => p.error).filter(Boolean);
@@ -120,6 +161,7 @@ export default function Home() {
           <span className="page-title">Home</span>
           <span className="wb-page-subtitle">fresh project · nothing recorded</span>
         </div>
+        <GoalForm key={owner} goal={goal} />
         <Empty
           title="Project hasn't started"
           line={
@@ -153,6 +195,7 @@ export default function Home() {
         <Label>Goal</Label>
         <div className="wb-goal__text">{goal}</div>
       </div>
+      <GoalForm key={owner} goal={goal} />
 
       <div className="wb-cols3">
         <div className="wb-card">

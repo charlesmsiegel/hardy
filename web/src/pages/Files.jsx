@@ -1,12 +1,8 @@
-// Files (read-only): the four trees from `/api/files`, a viewer for what is
-// picked, and the staged-uploads surface -- everything this shipment's brief
-// asks for except the editor. `Save & check`, diagnostics, goals at cursor,
-// declaration lookup and the Mathlib trace are shipment 3's; this page reads
-// `/api/file`, `/api/pdf` and `/api/cas/cells`, and nothing writes to
-// `lean/`, `tex/` or `cas/` through it. No toolbar is drawn for any of
-// that -- the brief's own rule ("the toolbar is not drawn yet rather than
-// drawn disabled") -- so the viewer below is a highlighted `<pre>`/notebook/
-// `<object>`, never a `<textarea>`.
+// Files reads the four authored/built trees and stages uploads. Lean and
+// TeX open in Editor, whose Save & check uses the session's checked-save
+// admission and preserves dirty buffers when disk state changes. CAS opens
+// its cell journal and composes commands for review; PDFs use the viewer.
+// UploadPicker and DropOverlay share stageOne's scan and post-upload signal.
 //
 // The tree *header* lines carry real data where it exists:
 // `/api/environment`'s `lean`/`mathlib`/`latex`/`tectonic`/`cas` probes
@@ -20,10 +16,10 @@
 // (not even as `Absent` -- there is no single cell for it the way there is
 // for a row's size/mtime/verdict).
 //
-// The Uploads section is where Task 11 left two computed values with
-// nowhere to go: `workbench/DropOverlay.jsx` computes a SHA-256 and, for a
+// The Uploads section reads two browser-computed values:
+// `workbench/stageUpload.js` computes a SHA-256 and, for a
 // `.lean` file, scans it for `theorem|lemma|def|axiom` names and `sorry`,
-// then (as of this task) hands both to `workbench/uploadScans.js`, an
+// then hands both to `workbench/uploadScans.js`, an
 // in-memory record keyed by the name `/api/upload` staged the file as. A
 // card for a file dropped this browser session shows the real digest and
 // scan; one for a file already staged before this session started (a reload,
@@ -65,6 +61,7 @@ import Tex from '../components/Tex.jsx';
 import {del, get, post} from '../api.js';
 import {AtCursor, RecordLane, Scratch} from '../files/AtCursor.jsx';
 import Editor from '../files/Editor.jsx';
+import UploadPicker from '../files/UploadPicker.jsx';
 import Trace from '../files/Trace.jsx';
 import useHash from '../session/useHash.js';
 import usePanel from '../session/usePanel.js';
@@ -170,6 +167,10 @@ function kindOf(path, data) {
   return null;
 }
 
+/** A file row is a <button> (so Tab reaches it and Enter opens it) dressed as
+ *  the row it always was; `wb-rowbutton` only takes the button's own drawing off. */
+const fileRowClass = (on) => (on ? 'wb-files__row wb-files__row--on wb-rowbutton' : 'wb-files__row wb-rowbutton');
+
 function TreeSection({def: treeDef, count, rows, envChecks, selected, onPick}) {
   return (
     <div className="wb-files__tree">
@@ -189,15 +190,17 @@ function TreeSection({def: treeDef, count, rows, envChecks, selected, onPick}) {
           {rows.map((row) => {
             const {stripped, depth} = tail(row.path, treeDef.key);
             return (
-              <div
+              <button
                 key={row.path}
-                className={row.path === selected ? 'wb-files__row wb-files__row--on' : 'wb-files__row'}
+                type="button"
+                className={fileRowClass(row.path === selected)}
+                aria-current={row.path === selected ? 'true' : undefined}
                 style={{paddingLeft: depth * 12}}
                 onClick={() => onPick(row.path)}
               >
                 <span className="wb-files__row-name">{stripped}</span>
                 <RowMeta row={row} />
-              </div>
+              </button>
             );
           })}
         </div>
@@ -215,14 +218,16 @@ function PdfSection({count, rows, selected, onPick}) {
       {rows.length ? (
         <div className="wb-files__rows">
           {rows.map((row) => (
-            <div
+            <button
               key={row.path}
-              className={row.path === selected ? 'wb-files__row wb-files__row--on' : 'wb-files__row'}
+              type="button"
+              className={fileRowClass(row.path === selected)}
+              aria-current={row.path === selected ? 'true' : undefined}
               onClick={() => onPick(row.path)}
             >
               <span className="wb-files__row-name">{row.path}</span>
               <RowMeta row={row} />
-            </div>
+            </button>
           ))}
         </div>
       ) : (
@@ -351,8 +356,7 @@ function Cell({cell, onRaise}) {
 }
 
 function CasViewer({path, revision}) {
-  const {setDraft} = useSession();
-  const [, goTo] = useHash();
+  const {compose} = useSession();
   const [composed, setComposed] = useState('');
   // The same route the Import buttons take, and for the same reason: a cell
   // run is a session-changing action whose outcome is genuinely unknown until
@@ -360,10 +364,7 @@ function CasViewer({path, revision}) {
   // `/cas run <path>` and `/cas <expr>` are both real
   // (`app/tui/handlers.py`'s `handle_cas` and its argument parser); neither
   // is safe in flight, and the composer is where a refusal would be shown.
-  const raise = (command) => {
-    setDraft(command);
-    goTo({page: 'chat'});
-  };
+  const raise = compose;
   const cellsPanel = usePanel('/api/cas/cells', revision);
   if (cellsPanel.error) return <p className="panel__error">{cellsPanel.error}</p>;
   if (!cellsPanel.data) return <p className="panel__note">Reading the journal...</p>;
@@ -377,6 +378,11 @@ function CasViewer({path, revision}) {
   const segments = [...bySegment.keys()].sort((a, b) => a - b);
   return (
     <>
+      <div className="wb-page-actions" aria-label="CAS notebook actions">
+        <button type="button" className="button" onClick={() => compose('/cas state')}>State</button>
+        <button type="button" className="button" onClick={() => compose('/cas reset')}>Reset…</button>
+        <button type="button" className="button" onClick={() => compose('/cas export')}>Export</button>
+      </div>
       <div className="panel__note">
         cas/cells.jsonl {'·'} {total} cell{total === 1 ? '' : 's'}
         {truncated ? ` · only the newest ${cells.length} are shown` : ''} {'·'} opens as the notebook, not
@@ -394,6 +400,7 @@ function CasViewer({path, revision}) {
         <div className="wb-rail__scratch">
           <input
             className="wb-rail__input"
+            aria-label="new CAS cell"
             placeholder="Order(SymmetricGroup(4));"
             spellCheck={false}
             value={composed}
@@ -602,12 +609,12 @@ function UploadCard({file, reload}) {
 }
 
 export default function Files({arg}) {
-  const {revision, refusal} = useSession();
+  const {revision, refusal, status} = useSession();
   const opened = useRef({path: '', kind: null});
   const [, go] = useHash();
-  const filesPanel = usePanel('/api/files', revision);
+  const filesPanel = usePanel('/api/files', revision, status?.path);
   const envPanel = usePanel('/api/environment', revision);
-  const uploadsPanel = usePanel('/api/uploads', revision);
+  const uploadsPanel = usePanel('/api/uploads', revision, status?.path);
 
   // Staging writes a file without touching the session, so no `changed`
   // event follows it (`session/usePanel.js`'s own reasoning for exposing
@@ -647,6 +654,7 @@ export default function Files({arg}) {
           <span className="page-title">Files</span>
           <span className="wb-page-subtitle">fresh project {'·'} nothing recorded</span>
         </div>
+        <UploadPicker key={status?.path} />
         <Empty
           title="No Lean files"
           line="lean/, tex/ and cas/ do not exist yet. The first saved theorem creates lean/; drop a .lean file to import one now."
@@ -680,6 +688,7 @@ export default function Files({arg}) {
         <span className="page-title">Files</span>
         <span className="wb-page-subtitle">read here, written through the session {'·'} click a file to open it</span>
       </div>
+      <UploadPicker key={status?.path} />
       {errors.length ? <p className="panel__error">{errors[0]}</p> : null}
       {refusal ? <div className="wb-files__refusal">{refusal}</div> : null}
 

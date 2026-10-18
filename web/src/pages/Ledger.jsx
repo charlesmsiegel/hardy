@@ -1,5 +1,6 @@
 // The current ledger list, graph and exact item detail share one selection.
-// Structured project controls reuse the same session operations as /project.
+// New project actions live on Workflows; item inspection and exact review
+// reuse the same project-state catalog without changing the ledger reads.
 // Status filters preserve literal backend states; source history never becomes
 // a current action choice merely because its bytes remain readable.
 
@@ -14,9 +15,10 @@ import Table from '../components/Table.jsx';
 import useHash from '../session/useHash.js';
 import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
-import {NewTarget, TargetReview} from '../workbench/SemanticTarget.jsx';
-import ProjectWorkflow from '../workbench/ProjectWorkflow.jsx';
-import {IntakeReview,RefereeControl,AdmissionReview,HumanSemanticReview,ArgumentEditor,SelectedAssessment,SourceNavigation,ContextDetails} from '../workbench/ProjectReview.jsx';
+import {TargetReview} from '../workbench/SemanticTarget.jsx';
+import {SelectedAssessment,SourceNavigation,ContextDetails} from '../workbench/ProjectReview.jsx';
+import useProjectState from '../workbench/useProjectState.js';
+import {WORKFLOW_FORMS} from '../workbench/workflowForms.js';
 
 const VIEW_W = 760;
 const VIEW_H = 420;
@@ -536,13 +538,11 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph, projec
 }
 
 export default function Ledger({arg}) {
-  const {revision, setDraft, status, cancel} = useSession();
-  const project = status.path;
-  const disabled = status.turn_running || status.command_running || status.provider_active;
+  const {revision, setDraft} = useSession();
+  const {project, disabled, state, catalog, error: projectError} = useProjectState();
   const [, go] = useHash();
   const ledgerPanel = usePanel('/api/ledger', revision);
   const graphPanel = usePanel('/api/graph', revision);
-  const projectPanel = usePanel(project ? `/api/project-state?project=${encodeURIComponent(project)}` : null,revision);
   const [view, setView] = useState('list');
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
 
@@ -555,29 +555,28 @@ export default function Ledger({arg}) {
   if (!ledgerPanel.data) return <p className="panel__note">Reading the ledger...</p>;
 
   const {items} = ledgerPanel.data;
-  const state=projectPanel.data?.project === project ? projectPanel.data : {};
-  const catalog=state.catalog || {};
-  const refresh=() => {ledgerPanel.reload();graphPanel.reload();projectPanel.reload();};
-  const controls=<section key={project} aria-label="Project actions">
-    {projectPanel.error ? <p role="alert" className="panel__error">{projectPanel.error}</p> : null}
+  const projectNotes=<section aria-label="Project state">
+    {projectError ? <p role="alert" className="panel__error">{projectError}</p> : null}
     {(state.errors || []).map((error) => <p role="alert" key={error}>{error}</p>)}
-    <NewTarget project={project} catalog={catalog} disabled={disabled} onDone={refresh}/>
-    <ProjectWorkflow project={project} catalog={catalog} workflow={state.workflow} intake={state.intake} disabled={disabled} onDone={refresh} onCancel={cancel} go={go}/>
-    <IntakeReview project={project} catalog={catalog} intake={state.intake} disabled={disabled} onDone={refresh}/>
-    <RefereeControl project={project} catalog={catalog} intake={state.intake} referee={state.referee} disabled={disabled} onDone={refresh} onCancel={cancel}/>
-    <AdmissionReview project={project} catalog={catalog} disabled={disabled} onDone={refresh}/>
-    <HumanSemanticReview project={project} catalog={catalog} disabled={disabled} onDone={refresh}/>
-    <ArgumentEditor project={project} catalog={catalog} disabled={disabled} onDone={refresh}/>
   </section>;
+  const newMenu = <details className="wb-new-menu">
+    <summary className="button button--small">New…</summary>
+    <nav aria-label="Open a project workflow">
+      {WORKFLOW_FORMS.map((form) => <a key={form.id} href={`#/workflows/${form.id}`} onClick={(event) => {
+        event.preventDefault();go({page:'workflows',arg:form.id});
+      }}>{form.title}</a>)}
+    </nav>
+  </details>;
 
   if (items.length === 0) {
     return (
       <div className="wb-page-body">
         <div className="wb-page-head">
           <span className="page-title">Ledger</span>
+          {newMenu}
           <span className="wb-page-subtitle">fresh project · nothing recorded</span>
         </div>
-        {controls}
+        {projectNotes}
         <Empty
           title="Ledger is empty"
           line="0 items · 0 relations · revision 0. Items appear when a theorem is saved, an assumption approved, or a research note recorded."
@@ -620,12 +619,13 @@ export default function Ledger({arg}) {
     <div className="wb-page-body">
       <div className="wb-page-head">
         <span className="page-title">Ledger</span>
+        {newMenu}
         <span className="wb-page-subtitle">
           {nodes.length} items · {edges.length} relations · revision {rev} · {staleEdges.length} stale
         </span>
       </div>
 
-      {controls}
+      {projectNotes}
       <div className="wb-ledger__toggle">
         <button
           type="button"

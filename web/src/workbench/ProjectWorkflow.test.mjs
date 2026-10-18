@@ -7,8 +7,8 @@ const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://localhos
 globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const {createRoot}=await import('react-dom/client');
 const server=await createServer({server:{middlewareMode:true,ws:false}});
-const {ContextForm,LiveWorkflow,ObligationWork,ManuscriptIntake}=await server.ssrLoadModule('/src/workbench/ProjectWorkflow.jsx');
-const {AdmissionReview,SelectedAssessment,SourceNavigation,IntakeReview,RefereeControl,AssessmentReport,BundleExport}=await server.ssrLoadModule('/src/workbench/ProjectReview.jsx');
+const {ContextForm,LiveWorkflow,ObligationWork,ObligationForm,OBLIGATION_KINDS,ManuscriptIntake,ScopeForm,Field,Choice,Feedback}=await server.ssrLoadModule('/src/workbench/ProjectWorkflow.jsx');
+const {AdmissionReview,SelectedAssessment,SourceNavigation,IntakeReview,RefereeControl,AssessmentReport,BundleExport,HumanSemanticReview,ArgumentEditor}=await server.ssrLoadModule('/src/workbench/ProjectReview.jsx');
 const {filterObligations,useProjectAction,sourceChoiceKey,evidenceChoiceKey}=await server.ssrLoadModule('/src/workbench/projectForms.js');
 const root=createRoot(document.getElementById('root'));
 test.after(async () => {await act(() => root.unmount());await server.close();dom.window.close();});
@@ -28,8 +28,197 @@ test('context and Research forms use accessible labelled exact selections',async
   const target=row('T','claim');const scope={...row('S','scope','b'),must_prove:[ref('T')],allowed_background:[],allowed_interfaces:[]};
   await act(() => root.render(React.createElement(LiveWorkflow,{project:'/p',catalog:{items:[target],scopes:[scope]}})));
   await type('id','research');await type('target',`T@${'a'.repeat(64)}`);await type('scope',`S@${'b'.repeat(64)}`);await submit();
-  assert.equal(request.operation,'research');assert.deepEqual(request.request.target,ref('T'));assert.deepEqual(request.request.scope,ref('S','b'));
+  assert.deepEqual(request,{operation:'research',project:'/p',request:{id:'research',target:ref('T'),scope:ref('S','b'),operation:'prove',context:null}});
   for (const control of document.querySelectorAll('input,textarea,select')) assert.ok(control.labels.length,`label for ${control.name}`);
+});
+
+test('opening an obligation submits the exact subject, scope, kind and required reason',async () => {
+  let request;let refreshed=0;
+  globalThis.fetch=async (path,init) => {assert.equal(path,'/api/project');request=JSON.parse(init.body);return new Response('{"ok":true,"record":{}}');};
+  const catalog={items:[row('T','claim')],scopes:[row('S','scope','b')]};
+  await act(() => root.render(React.createElement(ObligationForm,{project:'/p',catalog,onDone:() => refreshed++})));
+  assertPrimitives();
+  const reason=document.querySelector('[name="reason"]');
+  assert.equal(reason.tagName,'TEXTAREA');assert.equal(reason.required,true);
+  assert.deepEqual([...document.querySelector('[name="kind"]').options].map(({value}) => value),OBLIGATION_KINDS);
+  await type('subject','T@'+ 'a'.repeat(64));await type('scope','S@'+ 'b'.repeat(64));await type('kind','prove');await type('reason','needed');
+  await submit();
+  assert.deepEqual(request,{operation:'obligation',project:'/p',request:{subject:ref('T'),scope:ref('S','b'),kind:'prove',reason:'needed'}});
+  assert.equal(refreshed,1);assert.equal(document.querySelector('[role="status"]').textContent,'Recorded.');
+});
+
+test('opening an obligation reports refusal and preserves busy and capability conventions',async () => {
+  const catalog={items:[row('T','claim')],scopes:[row('S','scope','b')]};
+  await act(() => root.render(React.createElement(ObligationForm,{key:'none',project:'',catalog})));
+  assert.equal(document.querySelector('fieldset').disabled,true);
+  await act(() => root.render(React.createElement(ObligationForm,{key:'disabled',project:'/p',catalog,disabled:true})));
+  assert.equal(document.querySelector('fieldset').disabled,true);
+  await act(() => root.render(React.createElement(ObligationForm,{key:'unavailable',project:'/p',catalog:{...catalog,operations:{obligation:{available:false,reason:'Obligation owner is unavailable.'}}}})));
+  assert.equal(document.querySelector('fieldset').disabled,true);assert.match(document.body.textContent,/Obligation owner is unavailable/);
+  let finish;globalThis.fetch=async () => new Promise((resolve) => {finish=resolve;});
+  await act(() => root.render(React.createElement(ObligationForm,{key:'pending',project:'/p',catalog})));
+  await type('subject','T@'+ 'a'.repeat(64));await type('scope','S@'+ 'b'.repeat(64));await type('reason','needed');await submit();
+  assert.equal(document.querySelector('fieldset').disabled,true);
+  assert.match(document.querySelector('[role="status"]').textContent,/record appears in the ledger/);
+  await act(async () => finish(new Response('{"error":"Exact scope changed; reload its current version."}',{status:409})));
+  assert.equal(document.querySelector('fieldset').disabled,false);
+  assert.match(document.querySelector('[role="alert"]').textContent,/Exact scope changed/);
+});
+
+test('Explore and Repair preserve their exact operation requests and the shared run ID',async () => {
+  let request;globalThis.fetch=async (path,init) => {request=JSON.parse(init.body);return new Response('{"ok":true,"record":{}}');};
+  const catalog={items:[row('concept','concept','c'),row('A','argument','d')],contexts:[row('C','context')],scopes:[row('S','scope','b')],
+    obligations:[{...row('O','prove','e'),item:ref('concept','c'),status:'open',reason:'Missing inference'}]};
+  await act(() => root.render(React.createElement(LiveWorkflow,{key:'operations',project:'/p',catalog})));
+  await type('id','run');await type('workflow_kind','explore');
+  assert.equal(document.querySelector('[name="id"]').value,'run');
+  await type('explore_action','representation');await type('text','Choose a completion');
+  for (const [name,value] of Object.entries({context:'C@'+ 'a'.repeat(64),scope:'S@'+ 'b'.repeat(64),concept:'concept@'+ 'c'.repeat(64),use_site:'A@'+ 'd'.repeat(64)})) await type(name,value);
+  await submit();
+  assert.deepEqual(request,{operation:'explore',project:'/p',request:{id:'run',action:'representation',text:'Choose a completion',context:ref('C'),scope:ref('S','b'),concept:ref('concept','c'),use_site:ref('A','d')}});
+  await type('workflow_kind','repair');
+  assert.equal(document.querySelector('[name="id"]').value,'run');
+  await type('obligation','O@'+ 'e'.repeat(64));await type('original','A@'+ 'd'.repeat(64));await submit();
+  assert.deepEqual(request,{operation:'repair',project:'/p',request:{id:'run',obligation:ref('O','e'),original_argument:ref('A','d')}});
+});
+
+test('statement and argument reviews submit attributed assessment fields, not judgment fields',async () => {
+  let request;globalThis.fetch=async (path,init) => {request=JSON.parse(init.body);return new Response('{"ok":true,"record":{}}');};
+  const catalog={items:[row('T','claim'),row('A','argument','c')],scopes:[row('S','scope','b')]};
+  for (const dimension of ['statement','argument']) {
+    await act(() => root.render(React.createElement(HumanSemanticReview,{key:dimension,project:'/p',catalog})));
+    await type('review_dimension',dimension);assertPrimitives();
+    await type('subject','T@'+ 'a'.repeat(64));await type('scope','S@'+ 'b'.repeat(64));
+    await type('assessment_verdict',dimension==='statement'?'refuted':'defective');
+    await type('coverage','Main result\nBoundary case');await type('unresolved','One missing step');await type('assumptions','A@'+ 'c'.repeat(64));
+    await type('reviewer','Reviewer');await type('conditions','Read the supplied proof');await type('reason','A counterexample');await submit();
+    assert.deepEqual(request,{operation:'assess',project:'/p',request:{subject:ref('T'),scope:ref('S','b'),reviewer:'Reviewer',conditions:'Read the supplied proof',reason:'A counterexample',dimension,
+      verdict:dimension==='statement'?'refuted':'defective',coverage:['Main result','Boundary case'],unresolved:['One missing step'],assumptions:[ref('A','c')]}});
+  }
+});
+
+test('Referee report export uses the selected exact receipt and shared form primitives',async () => {
+  let request;globalThis.fetch=async (path,init) => {request=JSON.parse(init.body);return new Response('{"ok":true,"record":{}}');};
+  const report={ref:ref('receipt','f'),receipt:{request:{id:'audit'},status:'completed',detail:'Recorded report',layers:[]},current:true,report:{targets:[]}};
+  await act(() => root.render(React.createElement(RefereeControl,{project:'/p',referee:{reports:[report]}})));
+  await type('referee_report','receipt@'+ 'f'.repeat(64));assertPrimitives();await type('output','review-bundle');await submit();
+  assert.deepEqual(request,{operation:'referee-export',project:'/p',request:{receipt_id:'receipt',receipt_digest:'f'.repeat(64),output:'review-bundle'}});
+});
+// What a form is made of: a `.field` label around a `.field__control`, a
+// checkbox row around a bare box, and no inline `style` anywhere in the markup.
+const assertPrimitives=() => {
+  const controls=[...document.querySelectorAll('#root input,#root select,#root textarea')];
+  assert.ok(controls.length,'the form rendered controls');
+  for (const control of controls) {
+    assert.ok(control.labels.length,`label for ${control.name}`);
+    if (['checkbox','radio'].includes(control.type)) {assert.ok(control.labels[0].classList.contains('field--check'),`${control.name} sits in a field--check row`);continue;}
+    assert.ok(control.classList.contains('field__control'),`${control.name} is a field__control`);
+    assert.ok(control.labels[0].classList.contains('field'),`${control.name} is labelled by a .field`);
+    assert.equal(control.hasAttribute('style'),false,`${control.name} has no style attribute`);
+  }
+  assert.deepEqual([...document.querySelectorAll('#root [style]')].map((node) => node.tagName),[],'no element in the form carries an inline style');
+};
+test('form primitives carry classes, not inline styles',async () => {
+  const parent=row('parent','context');
+  await act(() => root.render(React.createElement(ContextForm,{project:'/p',catalog:{contexts:[parent],items:[row('T','claim')]}})));
+  assertPrimitives();
+  await type('parent',`parent@${'a'.repeat(64)}`);
+  assert.ok(document.querySelector('[name="declaration_id"]'),'choosing a parent opens the declaration fields');
+  assertPrimitives();
+  const required=document.querySelector('[name="id"]').labels[0],optional=document.querySelector('[name="supersedes"]').labels[0];
+  assert.ok(required.classList.contains('field--required'));assert.ok(!optional.classList.contains('field--required'));
+  assert.doesNotMatch(required.textContent,/\*/,'the required mark is drawn by CSS, not written into the label');
+  assert.equal(required.querySelector('.field__label').textContent,'New context ID');
+});
+test('every project form, in every state, is built from the same primitives',async () => {
+  const target=row('T','claim'),scope={...row('S','scope','b'),must_prove:[ref('T')],allowed_background:[],allowed_interfaces:[]};
+  const catalog={items:[target,row('A','argument','c')],scopes:[scope],contexts:[row('C','context','d')],sources:[row('paper','source')],obligations:[]};
+  const workflow={running:false,capabilities:{prove:{available:true}},attempts:[{id:'1',kind:'research',request_id:'r',status:'done',detail:'d',elapsed:1,recorded_at:'now',request_json:'{}'}],
+    calls:[{id:'c',stage:'prove',model:'m',status:'ok',detail:'d',elapsed:1,usage:{},system_prompt:'s',user_prompt:'u',response:'r'}]};
+  const forms=[
+    [ScopeForm,{catalog}],[ManuscriptIntake,{catalog,intake:{source_choices:[{path:'A.tex',digest:'a'.repeat(64)}]}}],
+    [LiveWorkflow,{catalog,workflow}],[HumanSemanticReview,{catalog}],[ArgumentEditor,{catalog}],
+    [BundleExport,{catalog,selection:{target:ref('T')}}],[SelectedAssessment,{catalog,target}],
+    [ObligationWork,{catalog}],[ObligationForm,{catalog}],
+  ];
+  for (const [Form,props] of forms) {
+    await act(() => root.render(React.createElement(Form,{project:'/p',...props})));
+    assertPrimitives();
+    const feedback=document.querySelector('#root [role="status"]');
+    if (Form === ObligationWork) assert.equal(feedback,null,'the obligation history has no pending action');
+    else {assert.ok(feedback,`${Form.name} feedback line exists`);assert.ok(feedback.classList.contains('wb-feedback'));}
+  }
+  for (const kind of ['explore','repair']) {
+    await act(() => root.render(React.createElement(LiveWorkflow,{key:kind,project:'/p',catalog,workflow})));
+    await type('workflow_kind',kind);assertPrimitives();
+  }
+  for (const dimension of ['statement','argument']) {
+    await act(() => root.render(React.createElement(HumanSemanticReview,{project:'/p',catalog})));
+    await type('review_dimension',dimension);assertPrimitives();
+    assert.ok(document.querySelector('[name="assessment_verdict"]'));
+    assert.equal(Boolean(document.querySelector('[name="verdict"]')),false);
+  }
+  const proposal={id:'proposal',request:{id:'paper',citation_depth:0},status:'proposed',mappings:[{key:'k',kind:'claim',name:'Main',span:{path:'a.tex',digest:'f'.repeat(64),start:0,end:4,quote:'text'},declarations:[],bindings:[]}],gaps:[],sources:[]};
+  await act(() => root.render(React.createElement(IntakeReview,{project:'/p',catalog,intake:{proposals:[{ref:ref('proposal'),proposal,current:true}]}})));
+  await type('proposal_selection',`proposal@${'a'.repeat(64)}`);assertPrimitives();
+  const review={id:'review',proposal:ref('proposal'),scope:ref('S','b'),main_results:[ref('T')],required_internal:[]};
+  await act(() => root.render(React.createElement(RefereeControl,{project:'/p',catalog,intake:{proposals:[{ref:ref('proposal'),proposal}],reviews:[{ref:ref('review','f'),review,current:true}]}})));
+  await type('referee_review',`review@${'f'.repeat(64)}`);assertPrimitives();
+  const admission={id:'admission:1',digest:'c'.repeat(64),subject:ref('T'),scope:ref('S','b'),sources:[],missing_gates:['search'],can_approve:false,reason:'Missing search',decisions:[]};
+  await act(() => root.render(React.createElement(AdmissionReview,{project:'/p',catalog:{...catalog,admissions:[admission],evidence_refs:[]}})));
+  await type('admission_selection','admission:1');assertPrimitives();
+});
+
+test('pending feedback names the record destination and the actual Stop control',async () => {
+  for (const destination of ['the ledger','workflow history','the intake report','the Referee report']) {
+    await act(() => root.render(React.createElement(Feedback,{action:{pending:true},destination})));
+    assert.match(document.querySelector('[role="status"]').textContent,/Running\. Stop in the top bar cancels the active operation\./);
+    assert.ok(document.body.textContent.includes(`Leaving this page drops this form's reply; the run continues and its record appears in ${destination}.`));
+    assert.doesNotMatch(document.body.textContent,/Escape or Stop/);
+  }
+});
+test('Field draws its hint, its required mark and its error wiring from the class system',async () => {
+  await act(() => root.render(React.createElement('div',null,
+    React.createElement(Field,{label:'Optional name',name:'a',required:false,hint:'Letters only'}),
+    React.createElement(Field,{label:'Needed name',name:'b'}),
+    React.createElement(Feedback,{action:{pending:false,message:'Recorded.',error:'It failed'}}))));
+  const hint=document.querySelector('.field__hint');assert.equal(hint.textContent,'Letters only');
+  assert.equal(document.querySelector('[name="a"]').getAttribute('aria-describedby'),hint.id);
+  assert.equal(document.querySelector('[name="b"]').hasAttribute('aria-describedby'),false);
+  const status=document.querySelector('[role="status"]');assert.ok(status.classList.contains('wb-feedback'));assert.equal(status.textContent,'Recorded.');
+  assert.ok(document.querySelector('[role="alert"]').classList.contains('panel__error'));
+});
+// A <details> lays out only its summary and its content slot, so `display:flex; gap` on the
+// element itself never reaches the fields inside it (and leaves dead space when it is closed).
+// The group a disclosure holds is a div of its own, after the summary.
+const assertDisclosureOwnsAStack=(summaryText) => {
+  const details=[...document.querySelectorAll('#root details')].find((node) => node.firstElementChild.textContent.startsWith(summaryText));
+  assert.ok(details,summaryText);
+  assert.equal(details.firstElementChild.tagName,'SUMMARY','the summary stays the first child');
+  assert.ok(!details.className.includes('wb-stack'),`${summaryText}: the details is not itself a stack`);
+  const stack=details.querySelector(':scope > .wb-stack');
+  assert.ok(stack&&stack.tagName==='DIV',`${summaryText}: its fields sit in a div.wb-stack`);
+  assert.equal(stack.previousElementSibling,details.firstElementChild,'the stack follows the summary');
+  assert.ok(stack.querySelectorAll('.field').length>=2);
+};
+test('a disclosure inside a form stacks its fields in a div, never on the details element',async () => {
+  await act(() => root.render(React.createElement(ContextForm,{project:'/p',catalog:{contexts:[row('parent','context')]}})));
+  await type('parent',`parent@${'a'.repeat(64)}`);
+  assertDisclosureOwnsAStack('Add a local declaration');
+  await act(() => root.render(React.createElement(ManuscriptIntake,{project:'/p',intake:{source_choices:[]}})));
+  const paste=[...document.querySelectorAll('#root details')].find((node) => node.firstElementChild.textContent==='Paste manuscript TeX');
+  assert.ok(!paste.className.includes('wb-stack'),'a closed disclosure holding one form takes no stack');
+  for (const Form of [HumanSemanticReview,ArgumentEditor]) {
+    await act(() => root.render(React.createElement(Form,{project:'/p',catalog:{}})));
+    assertDisclosureOwnsAStack('Bind an exact source passage');
+  }
+  assert.equal(document.querySelectorAll('#root details.wb-stack').length,0);
+});
+test('only a value descriptor can be a disabled option, never a catalog record that carries the key',async () => {
+  const record={...row('R','claim'),disabled:true};
+  await act(() => root.render(React.createElement(Choice,{label:'Pick',name:'pick',values:[{value:'on',label:'Off limits',disabled:true},{value:'free',label:'Free'},record]})));
+  const disabled=[...document.querySelectorAll('option')].filter((option) => option.disabled).map((option) => option.textContent);
+  assert.deepEqual(disabled,['Off limits']);
 });
 test('obligation work includes all six states and accurate outstanding filter',async () => {
   const states=['open','investigating','blocked','resolved','dismissed','abandoned'];

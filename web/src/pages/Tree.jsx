@@ -1,28 +1,31 @@
 // Tree: the git-style graph over `/api/tree`'s `{entry_id, parent_id, type,
 // lesson}` list -- every branch of the conversation, not just the active
-// one. Reached only through the transcript/tree toggle in Chat's own header
-// (`TabBar.jsx` gives it no tab of its own), so this page and `pages/Chat.jsx`
-// share `chat/Header.jsx` and both read `/api/tree` independently.
+// one. Reached from its sidebar entry and from the transcript/tree toggle in
+// Chat's own header, so this page and `pages/Chat.jsx` share
+// `chat/Header.jsx` and both read `/api/tree` independently.
 //
 // `chat/tree.js`'s `layout()` does the actual git-log column assignment; this
-// file turns that into SVG coordinates and the two buttons the data can
-// really back. Two of the prototype's four buttons cannot be wired honestly:
+// file turns that into SVG coordinates and actions over exact entry IDs.
+// Abandon requires a lesson and confirmation; busy admission stays with the
+// session. Local lesson/confirmation state retires with its chat or entry.
+// Two of the prototype's four navigation buttons cannot be wired honestly:
 // see the comment on `RESUME_NOTE` and `COMPARE_NOTE` below, and the report
 // for Task 13a, for why -- the short version is that `/resume` and a
 // `/fork --name` flag do not exist in `src/hardy/app/tui/handlers.py`'s
 // command registry, and inventing a command string the server would refuse
 // is worse than saying plainly that no such action exists yet.
 //
-// Fork -- the one real command here -- is never sent from this click
+// Fork is never sent from its click
 // handler. It fills the composer's draft (`useSession().setDraft`) and
 // leaves submitting it to the user, per the prototype's own line ("Resume
 // and fork raise a line card in the composer") and the design's rule that a
 // session-changing action is reviewed before it runs, not auto-submitted.
 
-import {useState} from 'react';
+import {useId, useState} from 'react';
 import Absent, {orAbsent} from '../components/Absent.jsx';
 import Empty from '../components/Empty.jsx';
 import Facts from '../components/Facts.jsx';
+import {ConfirmCard} from '../components/Cards.jsx';
 import Label from '../components/Label.jsx';
 import Header from '../chat/Header.jsx';
 import {childCount, headerStats, isAbandon, isFork, layout} from '../chat/tree.js';
@@ -53,12 +56,52 @@ function summaryFor(entry, messages) {
   return message ? message.text || '' : null;
 }
 
+// The selected entry and its lesson belong to a particular chat. Re-keying
+// here also protects callers outside Shell's per-project page boundary.
 export default function Tree() {
+  const {status} = useSession();
+  return <ConversationTree key={`${status.path}/${status.chat}`} />;
+}
+
+function Abandon({entryId}) {
+  const {status, send} = useSession();
+  const inputId = useId();
+  const [lesson, setLesson] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const busy = status.turn_running || status.command_running || status.provider_active;
+  const command = `/abandon ${entryId} ${lesson.trim()}`;
+  return (
+    <>
+      <form data-action="abandon" className="wb-page-form" onSubmit={event => {
+        event.preventDefault();
+        if (!busy && lesson.trim()) setConfirm(true);
+      }}>
+        <div className="wb-page-field">
+          <label htmlFor={inputId}>Lesson from this branch</label>
+          <textarea id={inputId} required value={lesson} disabled={busy} onChange={event => {
+            setLesson(event.target.value);
+            setConfirm(false);
+          }} />
+        </div>
+        <button type="submit" className="button" disabled={busy || !lesson.trim()}>Abandon…</button>
+      </form>
+      {confirm ? <ConfirmCard command={command} title={`Abandon from ${entryId}?`} disabled={busy} onNo={() => setConfirm(false)} onYes={() => {
+        if (!busy && lesson.trim()) {
+          send(command);
+          setConfirm(false);
+        }
+      }} /> : null}
+    </>
+  );
+}
+
+function ConversationTree() {
   const {status, runningTool, messages, refusal, revision, setDraft} = useSession();
   const [route, go] = useHash();
 
-  const summary = usePanel('/api/summary', revision);
-  const tree = usePanel('/api/tree', revision);
+  const owner = `${status.path}/${status.chat}`;
+  const summary = usePanel('/api/summary', revision, owner);
+  const tree = usePanel('/api/tree', revision, owner);
 
   const [selectedId, setSelectedId] = useState(null);
 
@@ -66,8 +109,7 @@ export default function Tree() {
   if (errors.length) return <p className="panel__error">{errors[0]}</p>;
   if (!summary.data || !tree.data) return <p className="panel__note">Reading the tree…</p>;
 
-  const goal = (summary.data.goal || '').trim();
-  if (!goal) {
+  if (tree.data.entries.length === 0) {
     return (
       <div className="wb-page-body">
         <div className="wb-page-head">
@@ -191,9 +233,15 @@ export default function Tree() {
             </svg>
             <div className="wb-tree__rows">
               {built.rows.map(({entry, row}) => (
-                <div
+                <button
                   key={entry.entry_id}
-                  className={entry.entry_id === selected ? 'wb-tree__row wb-tree__row--selected' : 'wb-tree__row'}
+                  type="button"
+                  className={
+                    entry.entry_id === selected
+                      ? 'wb-tree__row wb-tree__row--selected wb-rowbutton'
+                      : 'wb-tree__row wb-rowbutton'
+                  }
+                  aria-current={entry.entry_id === selected ? 'true' : undefined}
                   style={{paddingLeft: svgWidth, height: ROW}}
                   onClick={() => setSelectedId(entry.entry_id)}
                 >
@@ -208,7 +256,7 @@ export default function Tree() {
                   <span className="wb-tree__row-when">
                     <Absent kind="unreported" />
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -284,6 +332,7 @@ export default function Tree() {
                   Open in chat
                 </a>
               </div>
+              <Abandon key={selectedEntry.entry_id} entryId={selectedEntry.entry_id} />
               <div className="panel__note">
                 Fork puts <span style={{fontFamily: 'var(--mono)', color: 'var(--fg)'}}>/fork {selectedEntry.entry_id}</span> in
                 the composer for review; submitting it is refused while a turn is running on that line. No{' '}

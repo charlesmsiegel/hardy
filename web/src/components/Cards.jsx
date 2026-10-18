@@ -33,7 +33,7 @@ function Shell({eyebrow, onKeyDown, children}) {
   );
 }
 
-export function ConfirmCard({command, title, facts, escNote = '', onYes, onNo}) {
+export function ConfirmCard({command, title, facts, escNote = '', onYes, onNo, disabled = false}) {
   // The footnote says "No is focused" and Help.jsx repeats the claim, so
   // both have to be true here, not just written: focus No on mount --
   // dismissing without answering is the safe default -- and treat Esc as No,
@@ -60,7 +60,7 @@ export function ConfirmCard({command, title, facts, escNote = '', onYes, onNo}) 
       {facts ? <Facts rows={facts} mono /> : null}
       <div className="card-shell__actions">
         <button ref={no} type="button" className="button" onClick={onNo}>No</button>
-        <button type="button" className="button button--yes" onClick={onYes}>Yes</button>
+        <button type="button" className="button button--yes" disabled={disabled} onClick={onYes}>Yes</button>
       </div>
       <div className="card-shell__footnote">No is focused. {escNote}</div>
     </Shell>

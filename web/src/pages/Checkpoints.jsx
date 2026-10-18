@@ -45,9 +45,9 @@
 // ledger rev 41 · taken before a restore that was then declined") has no
 // backing field either: `Checkpoint` (`workflows/checkpoints.py:52-61`)
 // carries `files`/`bytes`, a plain file count and byte total, never a
-// theorem count or a ledger revision. Omitted with a note here, the same
+// theorem count or a ledger revision. Omitted from the page, the same
 // "no endpoint carries this, so it is left out rather than drawn as a
-// column of not reported" call `Results.jsx`'s `OMITTED_NOTE` already makes
+// column of not reported" call `Results.jsx`'s source comments make
 // for its own four missing sections -- `not reported` would claim the
 // backend was asked and had nothing, when nothing asks at all.
 
@@ -60,10 +60,8 @@ import Table from '../components/Table.jsx';
 import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
 
-const CONTENTS_NOTE =
-  'No "contents at the time" column: Checkpoint (workflows/checkpoints.py:52-61) carries a file count and a ' +
-  'byte total, never a theorem count or a ledger revision. Omitted rather than drawn as not reported -- that ' +
-  'would claim the backend was asked and had nothing, when nothing asks at all.';
+// The file/byte totals above are the reported snapshot contents. No theorem
+// count or ledger revision is served, so there is no additional contents column.
 
 function bytesText(n) {
   if (n < 1024) return `${n} B`;
@@ -91,6 +89,7 @@ function SaveControl({name, onName, send, populated}) {
         <input
           type="text"
           className="wb-checkpoints__input"
+          aria-label="checkpoint name"
           value={name}
           placeholder="before-assembling-cases"
           onChange={(event) => onName(event.target.value)}
@@ -101,7 +100,7 @@ function SaveControl({name, onName, send, populated}) {
           disabled={!command}
           onClick={() => command && send(command)}
         >
-          Save…
+          Save
         </button>
         <span className="wb-checkpoints__command">{command || '/checkpoint ...'}</span>
       </div>
@@ -215,7 +214,6 @@ export default function Checkpoints() {
             ],
           }))}
         />
-        <div className="panel__note">{CONTENTS_NOTE}</div>
       </div>
     </div>
   );

@@ -1,10 +1,9 @@
-// The header bar Chat and Tree both draw, verbatim the same line in the
-// prototype at both sites (`main · turn 14 running · 17 entries · 3 lines`),
-// with the transcript/tree toggle at its right end. Presentational only --
-// `chat/tree.js`'s `headerStats` computes the numbers, both pages already
-// hold the `route`/`go` pair `useHash` gives them.
+// Chat and Tree share counts and the transcript/tree toggle. Chat also
+// supplies the session model command: its picker reflects reported state,
+// and its project/chat key discards a typed identity when ownership changes.
+import ModelPicker from './ModelPicker.jsx';
 
-export default function Header({chatLabel, running, entries, lines, active, go}) {
+export default function Header({chatLabel, running, entries, lines, active, go, model, busy, revision, onSend, owner, chat}) {
   return (
     <div className="wb-chat-header">
       <strong>{chatLabel}</strong>
@@ -12,6 +11,7 @@ export default function Header({chatLabel, running, entries, lines, active, go})
       <span>
         · {entries} entries · {lines} lines
       </span>
+      {onSend ? <ModelPicker key={`${owner}/${chat}`} owner={owner} model={model} busy={busy} revision={revision} onSend={onSend}/> : null}
       <span className="wb-chat-header__toggle">
         <button
           type="button"

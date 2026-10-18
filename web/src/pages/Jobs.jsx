@@ -30,18 +30,20 @@
 // fixture now builds its state from `DelegationState.ACTIVE`, so what this
 // page renders for it is `active`, coloured `accent`.
 //
-// Controls sit behind confirm cards, per the design line for this page.
+// Complete commands use confirm cards. Finish and Pin compose the exact
+// ID for the user to supply the synthesis or pin kind; /api/jobs does not
+// expose the interior-node spawn permission that finish_subtree requires.
 // `ConfirmCard` (`components/Cards.jsx`, Task 9, zero importers before this)
 // fits them exactly: every command below is checked against the registry in
 // `src/hardy/app/tui/handlers.py` before it is offered.
 //
 //   Pause…               /jobs pause <id>       (handle_jobs, words[0]=="pause")
 //   Resume…               /jobs resume <id>      (handle_jobs, words[0]=="resume")
-//   Reinforce +2 checks…  /jobs reinforce <id> 2 (handle_jobs, words[0]=="reinforce")
+//   Reinforce amount…    /jobs reinforce <id> 2 (handle_jobs, words[0]=="reinforce")
 //   Cancel…               /cancel <id>           (handle_cancel, its own command)
 //   Handle…               /jobs handle <id>      (handle_jobs, words[0]=="handle", on an attention item)
 //
-// Three controls the prototype draws are left out because no command backs
+// Two controls the prototype draws are left out because no command backs
 // them honestly. "Unpin…" needs a pin kind (`min_attention` etc. --
 // `_PIN_KINDS` in handlers.py) that nothing in `/api/jobs` says is set on a
 // delegation, so there is no way to know which kind to unpin. "Subscribe…"
@@ -62,7 +64,7 @@
 // turn's grace) used: reported, never charged to the root, so it is drawn
 // beside the ceilings rather than counted against them.
 
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import Absent, {orAbsent} from '../components/Absent.jsx';
 import {ConfirmCard} from '../components/Cards.jsx';
 import Empty from '../components/Empty.jsx';
@@ -106,13 +108,82 @@ function flattenTree(rows) {
   return out;
 }
 
+const TERMINAL = new Set(['completed', 'partial', 'failed', 'cancelled', 'exhausted', 'unknown']);
+
+// A control target belongs to this project. The panel's owner gate also
+// prevents a cached response from supplying another project's selectable IDs.
 export default function Jobs() {
-  const {revision, send, refusal} = useSession();
-  const jobs = usePanel('/api/jobs', revision);
+  const {status} = useSession();
+  return <ProjectJobs key={status?.path} />;
+}
+
+function JobActions({selected, onConfirm, onChange}) {
+  const {compose} = useSession();
+  const [checks, setChecks] = useState('2');
+  const valid = /^\d+$/.test(checks) && Number.isSafeInteger(Number(checks)) && Number(checks) >= 1;
+  const terminal = TERMINAL.has(selected.state);
+  const ask = (command, title) => onConfirm({command, title, id:selected.id, state:selected.state});
+  return (
+    <div className="wb-jobs__actions">
+      {selected.state === 'queued' ? (
+        <button type="button" className="button" onClick={() => ask(`/jobs pause ${selected.id}`, `Pause ${selected.id}?`)}>
+          Pause…
+        </button>
+      ) : null}
+      {selected.state === 'paused' ? (
+        <button type="button" className="button" onClick={() => ask(`/jobs resume ${selected.id}`, `Resume ${selected.id}?`)}>
+          Resume…
+        </button>
+      ) : null}
+      {!terminal ? (
+        <>
+          <label className="wb-checks">
+            Additional official checks
+            <input name="checks" type="number" min="1" step="1" value={checks} onChange={event => {
+              setChecks(event.target.value);
+              onChange();
+            }} />
+          </label>
+          <button type="button" className="button" disabled={!valid} onClick={() => {
+            if (valid) ask(`/jobs reinforce ${selected.id} ${Number(checks)}`, `Reinforce ${selected.id} with ${Number(checks)} more official checks?`);
+          }}>
+            Reinforce…
+          </button>
+          <button type="button" className="button" onClick={() => ask(`/cancel ${selected.id}`, `Cancel ${selected.id} and its descendants?`)}>
+            Cancel…
+          </button>
+          <button type="button" className="button" onClick={() => compose(`/jobs finish ${selected.id} `)}>
+            Finish…
+          </button>
+        </>
+      ) : null}
+      <button type="button" className="button" onClick={() => compose(`/jobs pin ${selected.id} `)}>
+        Pin…
+      </button>
+      <div className="panel__note">
+        {!terminal ? 'Finish requires an interior node and a synthesis. Review the command in Chat; the server checks eligibility and cancels running children. ' : ''}
+        Pin requires a kind and, for some kinds, a value.
+      </div>
+    </div>
+  );
+}
+
+function ProjectJobs() {
+  const {revision, status, send, refusal} = useSession();
+  const jobs = usePanel('/api/jobs', revision, status?.path);
   const [selectedId, setSelectedId] = useState(null);
-  //: The one confirm card open at a time, wherever it was raised from --
-  //: an attention item's "Handle…" or a selected delegation's own actions.
+  // A confirmation captures an ID and state; it is never rebuilt from a
+  // later selection. Amount/selection edits dismiss it explicitly.
   const [confirm, setConfirm] = useState(null);
+  useEffect(() => {
+    setConfirm(current => {
+      if (!current) return null;
+      const valid = current.attention
+        ? jobs.data?.attention.some(item => item.id === current.id && item.actionable)
+        : jobs.data?.delegations.some(row => row.id === current.id && row.id === selectedId && row.state === current.state);
+      return valid ? current : null;
+    });
+  }, [jobs.data, selectedId]);
 
   if (jobs.error) return <p className="panel__error">{jobs.error}</p>;
   if (!jobs.data) return <p className="panel__note">Reading jobs...</p>;
@@ -147,6 +218,9 @@ export default function Jobs() {
 
   const rows = flattenTree(delegations);
   const selected = delegations.find((row) => row.id === selectedId) || null;
+  const confirmValid = confirm && (confirm.attention
+    ? attention.some(item => item.id === confirm.id && item.actionable)
+    : selected?.id === confirm.id && selected.state === confirm.state);
   const children = selected ? delegations.filter((row) => row.parent === selected.id) : [];
   const requiring = attention.filter((item) => item.actionable).length;
   const countsLine =
@@ -161,12 +235,12 @@ export default function Jobs() {
         <span className="wb-page-subtitle">{countsLine}</span>
       </div>
 
-      {confirm ? (
+      {confirmValid ? (
         <ConfirmCard
           command={confirm.command}
           title={confirm.title}
           facts={confirm.facts}
-          onYes={() => runCommand(confirm.command)}
+          onYes={() => { if (confirmValid) runCommand(confirm.command); }}
           onNo={() => setConfirm(null)}
         />
       ) : null}
@@ -195,6 +269,8 @@ export default function Jobs() {
                       onClick={() =>
                         setConfirm({
                           command: `/jobs handle ${item.id}`,
+                          id: item.id,
+                          attention: true,
                           title: `Handle ${item.id}?`,
                           facts: [['raised', item.summary]],
                         })
@@ -220,7 +296,10 @@ export default function Jobs() {
             </Label>
             <Table
               head={['node · objective', 'state']}
-              onPick={setSelectedId}
+              onPick={id => {
+                setSelectedId(id);
+                setConfirm(null);
+              }}
               selected={selectedId}
               rows={rows.map((row) => ({
                 key: row.id,
@@ -259,41 +338,7 @@ export default function Jobs() {
                   ['waiting on', <Absent key="waiting" kind="unreported" />],
                 ]}
               />
-              <div className="wb-jobs__actions">
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => setConfirm({command: `/jobs pause ${selected.id}`, title: `Pause ${selected.id}?`})}
-                >
-                  Pause…
-                </button>
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => setConfirm({command: `/jobs resume ${selected.id}`, title: `Resume ${selected.id}?`})}
-                >
-                  Resume…
-                </button>
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() =>
-                    setConfirm({
-                      command: `/jobs reinforce ${selected.id} 2`,
-                      title: `Reinforce ${selected.id} with 2 more official checks?`,
-                    })
-                  }
-                >
-                  Reinforce +2 checks…
-                </button>
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => setConfirm({command: `/cancel ${selected.id}`, title: `Cancel ${selected.id} and its descendants?`})}
-                >
-                  Cancel…
-                </button>
-              </div>
+              <JobActions key={`${selected.id}/${selected.state}`} selected={selected} onConfirm={setConfirm} onChange={() => setConfirm(null)} />
               <div className="panel__note">
                 No <code>/jobs unpin</code> or <code>/jobs subscribe</code> control is offered here: unpinning needs
                 a pin kind (<code>min_attention</code>, <code>forbid_spend</code>, <code>reinforce</code>,{' '}

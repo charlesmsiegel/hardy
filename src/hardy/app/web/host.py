@@ -899,6 +899,11 @@ class WebHost:
                 if resume is not None and not outcome.command.safe_in_flight:
                     resume()
                 self._commands_running += 1
+                # Said now, as the reopen and `run_exclusive` admissions say
+                # it: a command that waits on a card runs for as long as a
+                # person takes, and a page told only when it ends would never
+                # know to offer Stop meanwhile.
+                self.emit({"type": "state", **self.state()})
                 self._loop.create_task(self._run_command(outcome))
             return {"kind": outcome.kind, "message": outcome.message}
 

@@ -5,7 +5,7 @@
 // refusal, and a card that vanished without answering would leave the handler
 // awaiting a future nobody will resolve.
 
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useId, useRef, useState} from 'react';
 
 function Preamble({lines}) {
   if (!lines?.length) return null;
@@ -72,7 +72,7 @@ function Choose({prompt, answer, dismiss}) {
   );
 }
 
-function Line({answer, dismiss}) {
+function Line({answer, dismiss, labelId}) {
   const [value, setValue] = useState('');
   const input = useRef(null);
 
@@ -85,6 +85,7 @@ function Line({answer, dismiss}) {
       <input
         ref={input}
         className="prompt__input"
+        aria-labelledby={labelId}
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
@@ -133,6 +134,7 @@ function Confirm({answer, dismiss}) {
 }
 
 export default function Prompt({prompt, onAnswer}) {
+  const titleId = useId();
   const answer = (value) => onAnswer(prompt.id, value);
   const dismiss = () => onAnswer(prompt.id, null);
 
@@ -140,11 +142,11 @@ export default function Prompt({prompt, onAnswer}) {
     <section className="prompt">
       <Preamble lines={prompt.preamble} />
       <header className="prompt__head">
-        <div className="prompt__title">{prompt.title}</div>
+        <div id={titleId} className="prompt__title">{prompt.title}</div>
         {prompt.subtitle ? <div className="prompt__subtitle">{prompt.subtitle}</div> : null}
       </header>
       {prompt.kind === 'choose' ? <Choose prompt={prompt} answer={answer} dismiss={dismiss} /> : null}
-      {prompt.kind === 'line' ? <Line answer={answer} dismiss={dismiss} /> : null}
+      {prompt.kind === 'line' ? <Line answer={answer} dismiss={dismiss} labelId={titleId} /> : null}
       {prompt.kind === 'confirm' ? <Confirm answer={answer} dismiss={dismiss} /> : null}
     </section>
   );

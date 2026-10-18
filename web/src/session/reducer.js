@@ -5,10 +5,11 @@
 // The session holds no truth of its own. Every field below is either
 // something the server said (`status`, `commands`, `projects`, the
 // transcript) or the accumulation of events it sent, and `changed` is the
-// server telling the page that a panel's underlying artifact moved. The one
-// exception is the user's own line, which is echoed locally the moment it is
-// accepted: the stream republishes the model's half of a turn and never the
-// half the user typed.
+// server telling the page that a panel's underlying artifact moved. Local
+// state holds the user's draft and its focus request, plus the user's own
+// line echoed the moment it is accepted: the stream republishes the model's
+// half of a turn and never the half the user typed. Composing a draft never
+// creates that echo; sending does.
 
 let counter = 0;
 //: Exported so `SessionProvider` can stamp the same sequence onto the user's
@@ -36,6 +37,9 @@ export const initial = {
   //: the turn. Null between turns.
   streamId: null,
   draft: '',
+  //: A request to focus, separate from draft text so composing the same line
+  //: twice still gives the user a visible, focused place to review it.
+  composeFocus: 0,
   refusal: '',
   runningTool: '',
   revision: 0,
@@ -312,6 +316,8 @@ export function reducer(state, action) {
       return applyEvent(state, action.event);
     case 'draft':
       return {...state, draft: action.draft};
+    case 'compose':
+      return {...state, draft: action.text, composeFocus: state.composeFocus + 1};
     case 'sending':
       // Echoed before the POST is answered, not after. The turn it starts
       // streams back on a connection of its own, and on a fast session the

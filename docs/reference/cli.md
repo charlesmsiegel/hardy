@@ -73,7 +73,9 @@ The page runs the same session, record and slash-command registry as `hardy chat
 
 Messages queued during a same-project reopen, or an open that fails, drain in order into their originating project. Switching to a different project discards that old queue with an explicit notice, so the new project never receives those messages.
 
-The page is organized into tabs: Home, Chat, Results, Ledger, Jobs, Runs, Publications, Library, Files and Checkpoints sit in the tab bar, with Status, Environment and Help beside it. Every one of them has a page; a hash that names no route at all says so rather than claiming a page is unbuilt. Ledger draws both a list/item view and its provenance graph, toggled from the page itself. Status shows what `/status` prints and `Spend · per scope`, where only the scopes something actually measures carry figures -- spend is kept as one session-wide total, so the per-branch cards say they are not measured rather than showing a number nobody computed.
+Ctrl+K / ⌘K opens a searchable palette of pages, chats of the open project, workflow forms and commands, including while typing in an editor, composer or prompt card. Pages and chats navigate; a workflow form opens Workflows with that form selected; commands fill and focus the composer for review without sending. If the dock is hidden, composing opens Chat. Escape closes the palette and restores focus; navigation or a project switch closes it too.
+
+A sidebar groups the pages: Project (Home, Chat, Tree), Mathematics (Ledger, Workflows, Results, Publications), Execution (Jobs, Runs, Checkpoints), Sources (Library, Files) and Session (Status, Environment, Help). Jobs carries the number of its attention items and Chat the number of cards waiting for an answer; the top bar repeats that count as a button that opens Chat, and shows a Stop button while a turn or a command runs. The sidebar narrows to a rail of glyphs on demand, and always below 1100px wide; the chat dock's pinned, strip and hidden toggle sits at its foot. Every entry has a page; a hash that names no route at all says so rather than claiming a page is unbuilt. If a page fails to draw, its error message and a `Reload page` button replace that page; the sidebar, top bar, footer strip and Chat dock stay mounted. The button retries the page, and changing project, page or sub-route retries it automatically. Chat has its own error panel, which resets when the project or chat changes. Ledger draws both a list/item view and its provenance graph, toggled from the page itself. Its `New…` menu opens the project forms on Workflows, grouped into Define, Bring in sources, Investigate, Judge and Record. Changing the selected form keeps its draft and pending reply; leaving Workflows drops that local reply while the operation continues and records its result. Switching project resets the forms. Status shows what `/status` prints and `Spend · per scope`, where only the scopes something actually measures carry figures -- spend is kept as one session-wide total, so the per-branch cards say they are not measured rather than showing a number nobody computed.
 
 Files is an editor. It lists the `lean/`, `tex/`, `cas/` and built-PDF trees with each file's size, mtime and -- for Lean -- the kernel verdict over the declarations it makes, opens what is picked (including the `cas/` cell journal, drawn as cells, with Re-run and a new-cell composer that raise real `/cas` commands for review), and shows files staged for upload. A Lean or TeX file opens in an editor with `Save & check`, which writes through the session's own save: the file is checked, every file that imports it is rebuilt, the result and documentation gates run and the axioms are audited, exactly as they are for a file the model saved. While the buffer differs from what is on disk the saved verdict is not shown against it, because it does not describe that text. A changed or deleted disk file leaves unsaved edits in the editor and offers an explicit choice: reload from disk (discarding edits), or keep the edits and overwrite or recreate the file. Saving checks the loaded file digest and refuses an unseen change rather than overwriting it. Truncated files are read-only. Refusals are printed verbatim. Beside the editor: the name under the caret resolved against the installed packages' declarations, with its real source at its real lines; what the ledger says about each declaration the file makes; and a `#check` box that runs against the file's import set and saves nothing. `docs/design/trust-boundary.md` describes the write path. Stop the server with Ctrl+C.
 
@@ -84,9 +86,39 @@ Files is an editor. It lists the `lean/`, `tex/`, `cas/` and built-PDF trees wit
 | `--port` | an ephemeral port |  | The loopback port to listen on, 0–65535; 0 chooses an ephemeral port. |
 | `--open` | off |  | Open the page in the default browser once the server is up. This is what the installer's launcher passes. |
 
+Workflows' Record group includes `Open an obligation`: choose an exact subject
+and scope, an obligation kind and a required reason, then explicitly submit.
+This records outstanding work; it does not establish evidence or acceptance.
+Ledger's `New…` menu and the command palette open the same form.
+
+Chat's rail has labelled title forms for `New chat` and `Rename chat`. Creating
+refreshes the chat list and opens the new conversation; renaming updates the
+current chat's title after a server read. The `main` chat keeps its name.
+The header model picker sends `/model <identity>` through the session; `Other…`
+accepts a typed identity. Its displayed selection follows server state.
+
 The Environment panel probes once per server configuration and reuses the result across turns and project switches. Its Re-probe button refreshes the checks on demand.
 
 Every mutation the page makes carries a per-process token embedded in the page, and the server refuses any request whose `Host` or `Origin` is not its own loopback address, so another site open in the same browser cannot drive the session. Uploads from the page land under the problem's `.local/uploads/` and are promoted only through `/import`, or admitted to the personal library and seeded, never copied into the audited trees directly.
+
+Home has a labelled Set goal form and an Export session… command draft. Help's
+command buttons are grouped by origin and fill and focus Chat for review.
+Tree's Abandon form requires a lesson and a confirmation naming the exact entry.
+Files has an Upload… picker for multiple files, alongside drag and drop; both
+stage files without admitting them. Its CAS notebook has State, Reset… and Export
+command drafts. Jobs limits actions to their applicable states, takes a positive
+reinforcement amount, and confirms complete commands before sending. Finish and
+Pin open drafts with the exact delegation ID for choosing the remaining inputs;
+the server still checks the interior-node requirement for Finish.
+
+If the model catalog cannot be read, its exact failure stays beside the picker;
+the reported model remains selected and Other… still accepts a typed identity
+when the session is idle. A refused Set goal shows the shared server explanation
+beside its form even when Chat's dock is hidden. A failed goal request also shows
+its error there and retains the transcript error; editing or retrying clears the
+form's request error, and changing project or chat resets it. Tree lists recorded entries
+independently of whether a goal was set. Checkpoints' Save button saves immediately;
+Restore still requires confirmation.
 
 ### hardy doctor
 

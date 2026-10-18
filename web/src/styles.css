@@ -1,21 +1,34 @@
 /* One theme, two palettes, a pages-first workbench.
  *
  * Every colour below is a variable and every variable is defined twice: once
- * for light, once under `prefers-color-scheme: dark`. Nothing here loads a
- * font from anywhere -- the page runs under `font-src 'self'`, so the body
- * text is a serif system stack (no download) and the only bundled faces are
- * KaTeX's own, which Vite emits beside the CSS that asks for them.
+ * for light, once under `prefers-color-scheme: dark` (`styles.test.mjs`
+ * fails a colour token that has only one). Nothing here loads a font from
+ * anywhere -- the page runs under `font-src 'self'` -- so all three stacks are
+ * system faces: `--sans` (a serif, despite the name) for prose, `--mono` for
+ * identifiers, code and figures, and `--ui` for chrome -- navigation,
+ * buttons, labels, table heads -- where a serif at 11-13px reads worse than
+ * the platform's own sans. The only bundled faces are KaTeX's own, which Vite
+ * emits beside the CSS that asks for them.
+ *
+ * Contrast: `--fg` and `--muted` both clear 4.5:1 on `--bg` and `--panel` in
+ * both palettes (`--muted` also on the 18% accent tint a selected row wears);
+ * `--border` is for rules and cards, `--border-strong` (3:1) for the edge of
+ * a control a person has to find.
  */
 
 :root {
   --bg: #e4e8de;
   --panel: #eceee6;
   --fg: #1e2a24;
-  --muted: #5f6b62;
+  --muted: #4c5850;
   --accent: #2e6a55;
   --error: #9a3a34;
-  --warning: #86620a;
-  --border: #c6cdc0;
+  --warning: #7a5906;
+  --border: #aeb7a8;
+  --border-strong: #76817a;
+  /* Accent pushed toward the text colour, so the ring is a step further from
+     the background than the accent itself in either palette. */
+  --focus: color-mix(in srgb, var(--accent) 80%, var(--fg));
   --result: #cfdfd2;
   --research: #e2dbc2;
   --concept: #d2d9e2;
@@ -23,7 +36,16 @@
   --other: #d8dcd2;
   --r: 3px;
   --r2: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --control-h: 32px;
+  --control-h-sm: 24px;
   --sans: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
   --math: "STIX Two Math", "Cambria Math", "Latin Modern Math", "Times New Roman", serif;
   color-scheme: light;
@@ -34,11 +56,13 @@
     --bg: #1b241f;
     --panel: #1f2923;
     --fg: #ece5d3;
-    --muted: #a49d8b;
+    --muted: #b5ae9c;
     --accent: #a8d3c2;
     --error: #e8a19a;
     --warning: #e2c778;
-    --border: #2e3a33;
+    --border: #3c4a42;
+    --border-strong: #6c7b72;
+    --focus: color-mix(in srgb, var(--accent) 80%, var(--fg));
     --result: #2c4a3c;
     --research: #4a4531;
     --concept: #33415a;
@@ -63,29 +87,53 @@ body,
 }
 
 body {
+  /* `accent-color` inherits, so every checkbox, radio and progress bar takes
+     the palette's accent without a rule of its own. */
+  accent-color: var(--accent);
   background: var(--bg);
   color: var(--fg);
-  font: 13px/1.5 var(--sans);
+  font: 14px/1.5 var(--sans);
 }
 
 /* -- workbench base type -------------------------------------------------- */
 
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+
+/* One ring for everything a keyboard can reach. A component that draws its
+   own focus (the composer's accent border, the Ledger graph's stroke) says so
+   in its own rule. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button,
+label {
+  font-family: var(--ui);
+}
+
+summary {
+  cursor: pointer;
+}
+
 .section-label {
   color: var(--muted);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.08em;
+  font: 600 11px/1.3 var(--ui);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .page-title {
-  font-size: 16px;
-  font-weight: 600;
+  font: 600 18px/1.3 var(--ui);
 }
 
 th {
   border-bottom: 1px solid color-mix(in srgb, var(--fg) 30%, transparent);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.06em;
+  font: 600 11px/1.3 var(--ui);
+  letter-spacing: 0.04em;
   text-align: left;
   text-transform: uppercase;
 }
@@ -94,23 +142,408 @@ td {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
-pre,
-textarea,
-input {
-  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+.visually-hidden {
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+/* -- controls: buttons, fields, disclosures --------------------------------
+ * The one set every page assembles its controls from. The element rules for
+ * `input`, `select` and `textarea` sit inside `:where()`, so they carry no
+ * specificity: the composer, the editor and every page's own compact input
+ * keep whatever their class says and pick up only what it leaves unsaid.
+ * Checkboxes, radios, file pickers and input-buttons keep the platform's
+ * drawing. */
+
+:where(
+    input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="submit"], [type="button"], [type="reset"], [type="image"]),
+    select,
+    textarea
+  ) {
+  background-color: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r2);
+  color: var(--fg);
+  font: 13px/1.4 var(--ui);
+  max-width: 100%;
+  padding: 0 var(--space-2);
+}
+
+:where(
+    input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="submit"], [type="button"], [type="reset"], [type="image"]),
+    select:not([multiple], [size])
+  ) {
+  height: var(--control-h);
+}
+
+:where(select[multiple], select[size]) {
+  padding: var(--space-1);
+}
+
+/* Mono, like the composer: what goes in a text area here is TeX, Lean, a
+   command or an identifier list far more often than it is prose. */
+:where(textarea) {
+  font: 13px/1.5 var(--mono);
+  min-height: calc(2 * var(--control-h));
+  padding: var(--space-2);
+  resize: vertical;
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+/* Not inside `:where()`: a page's compact input sets its own border colour,
+   and focus should still show on it. */
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="submit"], [type="button"], [type="reset"], [type="image"]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+}
+
+:where(input, select, textarea):disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Secondary is the default; `--primary` is the one action a form exists
+   for, `--quiet` an aside drawn as text, `--danger` anything that abandons,
+   cancels or deletes. Each modifier's hover comes after `.button:hover`,
+   which would otherwise repaint it. */
+.button {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r2);
+  color: var(--fg);
+  cursor: pointer;
+  display: inline-flex;
+  font: 500 13px/1.2 var(--ui);
+  gap: var(--space-1);
+  justify-content: center;
+  min-height: var(--control-h);
+  padding: var(--space-1) var(--space-3);
+  text-align: center;
+  text-decoration: none;
+}
+
+.button:hover:enabled {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border-color: var(--accent);
+}
+
+.button:active:enabled {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+
+.button:disabled,
+.button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.button--yes {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.button--primary:hover:enabled,
+.button--primary:active:enabled {
+  background: color-mix(in srgb, var(--accent) 82%, var(--fg));
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--fg));
+}
+
+.button--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.button--quiet:hover:enabled,
+.button--quiet:active:enabled {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: transparent;
+}
+
+.button--danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.button--danger:hover:enabled,
+.button--danger:active:enabled {
+  background: color-mix(in srgb, var(--error) 10%, var(--panel));
+  border-color: var(--error);
+}
+
+.button--small {
+  font-size: 12px;
+  min-height: var(--control-h-sm);
+  padding: 2px var(--space-2);
+}
+
+/* A list row that is also a control -- a file, a tree entry -- is a <button>
+   so a keyboard reaches it and Enter or Space opens it, but it keeps the look
+   of the row it was: this takes a button's own drawing off and nothing else.
+   `button:where(...)` is the weight of the bare `button` rule above, which it
+   must beat for the font, and still lighter than any class the row also
+   carries, so that class's padding, background and display stand. The ring
+   hugs the row instead of standing off it: these rows are packed edge to edge
+   and a file at the top level has no left padding, so an inset ring would be
+   drawn over its first letter. */
+button:where(.wb-rowbutton) {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  letter-spacing: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: start;
+  width: 100%;
+}
+
+.wb-rowbutton:focus-visible {
+  outline-offset: 0;
+}
+
+/* A labelled control: the label above, the control, then a hint. The label
+   is a real `<label>` (or the `<legend>` of a fieldset), never a
+   placeholder standing in for one. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.field__label {
+  color: var(--fg);
+  font: 600 12px/1.3 var(--ui);
+}
+
+.field__control {
+  width: 100%;
+}
+
+.field__hint {
+  color: var(--muted);
+  font: 12px/1.4 var(--ui);
+}
+
+/* The required mark is drawn, not typed: the label a screen reader reads is
+   the label alone (the control's own `required` carries the rest), and the
+   empty alternative keeps the star out of the speech. */
+.field--required .field__label::after {
+  color: var(--muted);
+  content: " *";
+  content: " *" / "";
+}
+
+/* A checkbox: the box then its words, on one line. */
+.field--check {
+  align-items: center;
+  flex-direction: row;
+  font: 13px/1.4 var(--ui);
+  gap: var(--space-2);
+  min-height: var(--control-h-sm);
+}
+
+.field--check > input {
+  flex: none;
+  margin: 0;
+}
+
+/* A form's controls, stacked. `.wb-fieldset` is the `<fieldset>` that
+   disables a whole form while it runs; `.wb-stack` is a `<div>` that gives
+   the same rhythm to any group inside one, including what a disclosure holds.
+   Never put it on a `<details>`: a details lays out only its summary and its
+   content slot, so the gap would miss the fields and add dead space when it
+   is closed. A button in either keeps its own width. */
+.wb-fieldset,
+.wb-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.wb-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.wb-fieldset--apart {
+  margin-top: var(--space-4);
+}
+
+/* The summary is not part of the stack, so the first field clears it. */
+summary + .wb-stack {
+  margin-top: var(--space-3);
+}
+
+.wb-fieldset > .button,
+.wb-stack > .button {
+  align-self: flex-start;
+}
+
+/* What a form says back: the outcome of the last request, in the chrome face
+   (its error is `.panel__error`). */
+.wb-feedback {
+  font: 13px/1.4 var(--ui);
+  overflow-wrap: anywhere;
+}
+
+/* Text the page quotes exactly -- TeX, Lean, a digest, a JSON record. */
+.wb-pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 13px/1.5 var(--mono);
+  margin: var(--space-2) 0;
+  overflow-wrap: anywhere;
+  padding: var(--space-2);
+  white-space: pre-wrap;
+}
+
+/* Directly in a card, the card's own gap spaces it. That holds for a section
+   or an article, not for a `<details>`: its flex gap reaches only the summary
+   and the content slot, and what sits in the slot is ordinary block flow. A
+   lone selector there (the one above a form, not a field inside one) spaces
+   itself. */
+.wb-card:not(details) > .wb-pre {
+  margin: 0;
+}
+
+details.wb-card > .field {
+  margin-block: var(--space-3);
+}
+
+/* One entry in a history, set off from the one above. */
+.wb-record {
+  margin-top: var(--space-3);
+}
+
+.wb-subhead {
+  font: 600 14px/1.3 var(--ui);
+  margin: var(--space-2) 0 0;
+}
+
+.wb-wrap {
+  overflow-wrap: anywhere;
+}
+
+.wb-facts {
+  margin: 0;
+}
+
+/* A `<details>` drawn as a card whose summary is the whole clickable header
+   row, with one rotating marker in place of the platform's triangle. The
+   summary bleeds to the card's edges (negative margin) so its hover and
+   divider span the card while the body keeps the card's padding. */
+.wb-disclosure {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+
+.wb-disclosure[open] {
+  padding-bottom: var(--space-3);
+}
+
+.wb-disclosure > summary {
+  align-items: center;
+  border-radius: var(--r2);
+  display: flex;
+  font: 600 13px/1.3 var(--ui);
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0 calc(-1 * var(--space-3));
+  min-height: calc(var(--control-h) + var(--space-2));
+  padding: var(--space-2) var(--space-3);
+  user-select: none;
+}
+
+.wb-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.wb-disclosure > summary::before {
+  color: var(--muted);
+  content: "\25B8";
+  content: "\25B8" / "";
+  display: inline-block;
+  flex: none;
+  /* A 1em square with the glyph centred in it, so the rotation turns the
+     glyph in place instead of swinging it off the text's centre line. */
+  height: 1em;
+  line-height: 1;
+  text-align: center;
+  transition: transform 120ms ease;
+  width: 1em;
+}
+
+.wb-disclosure > summary:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+/* Inside the card's border rather than across it. */
+.wb-disclosure > summary:focus-visible {
+  outline-offset: -2px;
+}
+
+.wb-disclosure[open] > summary {
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--r2) var(--r2) 0 0;
+  margin-bottom: var(--space-3);
+}
+
+.wb-disclosure[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-disclosure > summary::before {
+    transition: none;
+  }
 }
 
 /* -- the model picker ---------------------------------------------------- */
 
 .picker {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 12px;
   max-width: 40%;
   padding: 2px 6px;
+}
+
+select.picker {
+  height: var(--control-h-sm);
 }
 
 .picker:disabled {
@@ -125,6 +558,7 @@ input {
   color: var(--fg);
   font-family: var(--mono);
   font-size: 12px;
+  height: var(--control-h-sm);
   padding: 2px 6px;
 }
 
@@ -277,7 +711,7 @@ input {
 }
 
 .prompt__body:focus {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 4px;
 }
 
@@ -357,7 +791,7 @@ input {
 
 .composer__box {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   color: var(--fg);
   font-family: var(--mono);
@@ -423,31 +857,6 @@ input {
   display: flex;
   gap: 12px;
   justify-content: space-between;
-}
-
-.button {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--fg);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  padding: 4px 14px;
-}
-
-.button:hover:enabled {
-  border-color: var(--accent);
-}
-
-.button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.button--yes {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* -- shared panel notes and errors ---------------------------------------
@@ -546,6 +955,10 @@ input {
 
 .vtable__row--pick {
   cursor: pointer;
+}
+
+.vtable__row--pick:focus-visible {
+  outline-offset: -2px;
 }
 
 .vtable__row--selected {
@@ -680,11 +1093,22 @@ input {
  * collide with, the three-column client's own rules above.
  */
 
+/* The top bar across the top; the sidebar down the left; beside it the body
+   over the footer strip, which summarises the dock and so sits under the
+   body it belongs to. Named areas, so each piece is placed by name rather
+   than by its order among the shell's children: the sidebar spans two rows,
+   and the strip is not always drawn (`Shell` leaves it out on Chat and
+   Tree). */
 .wb-shell {
   background: var(--bg);
   color: var(--fg);
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "top top"
+    "nav body"
+    "nav foot";
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
 }
@@ -697,6 +1121,7 @@ input {
   flex-wrap: wrap;
   font-size: 12px;
   gap: 14px;
+  grid-area: top;
   padding: 6px 16px;
 }
 
@@ -740,61 +1165,181 @@ input {
   margin-left: auto;
 }
 
-.wb-toplinks {
-  display: flex;
-  gap: 2px;
-}
-
-.wb-toplink {
-  color: var(--muted);
-  padding: 2px 8px;
-}
-
-.wb-toplink--on {
-  color: var(--accent);
-}
-
-.wb-tabbar {
-  align-items: flex-end;
+/* -- Sidebar: the one navigation ------------------------------------------
+ * Two widths and nothing else: `--collapsed` (the user's choice) and the
+ * 1100px query below both only narrow the rail, and the `wb-nav` container
+ * query is the one place that decides what a rail that narrow shows -- so
+ * the two ways of collapsing cannot drift apart. The rail is back at 1100px,
+ * well before the dock goes at 900px: an open sidebar (184px) beside the
+ * pinned dock (380px) would leave a page 337px wide at 901px. Every button
+ * names itself in `aria-label`, which is why the words can be `display: none`
+ * here without leaving a button unnamed. */
+.wb-sidebar {
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  container: wb-nav / inline-size;
   display: flex;
-  flex-wrap: wrap;
-  font-size: 13px;
-  gap: 2px;
-  padding: 4px 10px 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  grid-area: nav;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-2);
+  width: 184px;
 }
 
-.wb-tab {
+.wb-sidebar--collapsed {
+  width: 48px;
+}
+
+.wb-nav__heading {
+  display: block;
+  padding: 0 var(--space-2) var(--space-1);
+}
+
+.wb-nav__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wb-nav__item {
   align-items: center;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r2);
+  color: var(--fg);
   cursor: pointer;
   display: flex;
-  font: inherit;
-  gap: 6px;
-  padding: 5px 10px;
+  font: 13px/1.3 var(--ui);
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: var(--space-1) var(--space-2);
+  position: relative;
+  text-align: start;
+  width: 100%;
 }
 
-.wb-tab--on {
-  border-bottom-color: var(--accent);
-  color: var(--accent);
+/* Not on the current entry: hover would otherwise out-rank its tint and dim
+   the one entry that says where you are. */
+.wb-nav__item:hover:enabled:not([aria-current]) {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.wb-dock-toggle {
-  background: none;
-  border: none;
+/* The current page: the accent tint a selected table row wears, a bar on
+   the leading edge so it still reads in the rail, and the text left in
+   `--fg` so its contrast is the text's own. The bar is a border, not a
+   shadow, because forced-colours mode drops shadows and the tint with them;
+   a border is kept and drawn in a system colour. It takes 3px of the row's
+   own padding so the glyph does not move when the entry becomes current. */
+.wb-nav__item[aria-current="page"] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-inline-start: 3px solid var(--accent);
+  font-weight: 600;
+  padding-inline-start: calc(var(--space-2) - 3px);
+}
+
+.wb-nav__item:disabled {
   color: var(--muted);
-  cursor: pointer;
-  font: 12px var(--mono);
-  margin-left: auto;
-  padding: 5px 10px;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.wb-nav__glyph {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+  width: 18px;
+}
+
+.wb-nav__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-nav__badge {
+  background: var(--accent);
+  border-radius: 8px;
+  color: var(--bg);
+  flex: none;
+  font: 600 11px/16px var(--mono);
+  min-width: 16px;
+  padding: 0 4px;
+  text-align: center;
+}
+
+/* A count that means "act on this" rather than "here is how many": the
+   error tone, so it is not read as the accent of a selected entry. */
+.wb-nav__badge--attention {
+  background: var(--error);
+}
+
+/* The dock's cycle and the rail's own collapse, apart from the pages. */
+.wb-sidebar__foot {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
+.wb-sidebar__foot .wb-nav__item {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* The dock's label says what pressing it does next, which is longer than a
+   page name; it wraps rather than losing its last words to an ellipsis. */
+.wb-sidebar__foot .wb-nav__label {
+  white-space: normal;
+}
+
+@container wb-nav (max-width: 64px) {
+  .wb-nav__heading,
+  .wb-nav__label {
+    display: none;
+  }
+
+  /* With the group names gone, a rule is what still says where one group
+     ends. */
+  .wb-nav__group + .wb-nav__group {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-3);
+  }
+
+  .wb-nav__item {
+    justify-content: center;
+    padding: var(--space-1) 0;
+  }
+
+  /* The current entry's 3px bar comes out of the same width, on the side the
+     bar is not, so its glyph stays centred where the others' are. */
+  .wb-nav__item[aria-current="page"] {
+    padding-inline: 0 3px;
+  }
+
+  .wb-nav__badge {
+    font-size: 10px;
+    line-height: 14px;
+    min-width: 14px;
+    padding: 0 3px;
+    position: absolute;
+    right: -2px;
+    top: 0;
+  }
 }
 
 .wb-split {
   display: grid;
+  grid-area: body;
   min-height: 0;
 }
 
@@ -873,6 +1418,7 @@ input {
   flex-wrap: wrap;
   font-size: 12px;
   gap: 12px;
+  grid-area: foot;
   padding: 6px 16px;
 }
 
@@ -914,16 +1460,29 @@ input {
 }
 
 /* `.wb-split2` and `.wb-cols3` are utilities for the pages built from
-   Task 12 on -- a two-column reading layout and a three-card row -- laid
-   down now because the breakpoint they collapse at is spec, not a per-page
-   choice. Neither is applied by anything in `workbench/` itself. */
+   Task 12 on -- a two-column reading layout and a three-card row. The
+   two-column layout collapses at a window width that is spec, not a per-page
+   choice; the card row follows the width of its page (below). */
 .wb-split2 {
   display: grid;
 }
 
+/* Three cards when the page has room for three 200px columns, two or one
+   when it does not. The page's width decides, not the window's: beside the
+   page sit a sidebar (open or a rail) and a dock (pinned or not), so the same
+   window gives pages anywhere from 470px to 950px, and a fixed three columns
+   under a window query was either cramped or collapsed too early. */
 .wb-cols3 {
+  --cols3-min: 200px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--cols3-min)), 1fr));
+}
+
+/* A row of forms needs more than a row of facts: at 200px a field's
+   placeholder ("path to a Hardy project, or a folder") is cut off, so the
+   row wraps to two columns sooner. */
+.wb-cols3--forms {
+  --cols3-min: 300px;
 }
 
 @media (max-width: 1280px) {
@@ -933,6 +1492,20 @@ input {
 
   .wb-split2 > :last-child {
     border-top: 1px solid var(--border);
+  }
+}
+
+/* The rail whatever the user last chose; their choice returns when the
+   window widens, and the button that would change it does nothing here, so
+   it is not drawn. This comes before the dock goes (below, at 900px): with
+   the dock still pinned, an open sidebar would leave the page too narrow. */
+@media (max-width: 1100px) {
+  .wb-sidebar {
+    width: 48px;
+  }
+
+  .wb-sidebar__collapse {
+    display: none;
   }
 }
 
@@ -947,10 +1520,6 @@ input {
 
   .wb-strip {
     display: flex !important;
-  }
-
-  .wb-cols3 {
-    grid-template-columns: minmax(0, 1fr) !important;
   }
 }
 
@@ -994,9 +1563,75 @@ input {
   gap: 4px;
 }
 
+/* Native page forms keep the review/submit boundary visible at both widths. */
+.wb-page-actions,
+.wb-page-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.wb-page-actions > .wb-page-form {
+  flex: 1 1 280px;
+  margin-bottom: 0;
+}
+
+.wb-page-field,
+.wb-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wb-page-field {
+  flex: 1 1 240px;
+}
+
+.wb-page-form textarea,
+.wb-checks input {
+  box-sizing: border-box;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 8px;
+  font: inherit;
+}
+
+.wb-page-form textarea {
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+}
+
+.wb-checks input {
+  width: 100px;
+}
+
+.wb-upload-picker {
+  margin-bottom: 14px;
+}
+
+.wb-help__command {
+  text-align: left;
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
 .wb-goal__text {
   font-size: 18px;
   line-height: 1.35;
+}
+
+.wb-goal__refusal,
+.wb-model-error {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .wb-card {
@@ -1012,6 +1647,114 @@ input {
 
 .wb-card__link {
   font-size: 12px;
+}
+
+/* Workflow selection hides mounted form instances; none of these layout
+ * rules override the native hidden attribute. A project change is what
+ * resets their local drafts and requests. */
+.wb-workflows__layout {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: 210px minmax(0, 1fr);
+}
+
+.wb-workflows__nav,
+.wb-workflows__group,
+.wb-workflows__body,
+.wb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wb-workflows__nav {
+  gap: 20px;
+}
+
+.wb-workflows__group .section-label {
+  margin: 0;
+}
+
+button.wb-workflows__choice {
+  background: transparent;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: var(--r);
+  color: var(--fg);
+  cursor: pointer;
+  font: 13px/1.4 var(--ui);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+button.wb-workflows__choice:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+button.wb-workflows__choice[aria-current="page"] {
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+  border-left-color: var(--accent);
+}
+
+.wb-form {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 16px;
+}
+
+.wb-form__title {
+  font: 600 17px/1.4 var(--ui);
+  margin: 0 0 4px;
+}
+
+.wb-feedback p {
+  margin: 4px 0;
+}
+
+.wb-new-menu {
+  position: relative;
+}
+
+.wb-new-menu > summary {
+  cursor: pointer;
+}
+
+.wb-new-menu > nav {
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: calc(100vw - 100px);
+  padding: 12px;
+  position: absolute;
+  top: 100%;
+  width: 310px;
+  z-index: 2;
+}
+
+.wb-new-menu a {
+  font: 13px/1.4 var(--ui);
+}
+
+@media (max-width: 760px) {
+  .wb-workflows__layout {
+    gap: 16px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wb-workflows__nav {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wb-workflows__choice {
+    overflow-wrap: anywhere;
+  }
 }
 
 .wb-cards-auto {
@@ -1048,11 +1791,12 @@ input {
 
 .wb-switcher__button {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   color: var(--fg);
   cursor: pointer;
   font: 12px var(--mono);
+  min-height: var(--control-h-sm);
   padding: 1px 8px;
 }
 
@@ -1076,10 +1820,10 @@ input {
   border-bottom: 1px solid var(--border);
   color: var(--muted);
   display: grid;
-  font: 600 10px var(--mono);
+  font: 600 11px var(--ui);
   gap: 0 16px;
   grid-template-columns: 170px minmax(0, 1fr);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   margin-bottom: 4px;
   padding: 4px 12px 6px;
   text-transform: uppercase;
@@ -1144,10 +1888,11 @@ input {
 
 .wb-switcher__input {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   color: var(--fg);
   font: 12px var(--mono);
+  height: var(--control-h-sm);
   padding: 1px 6px;
 }
 
@@ -1187,12 +1932,6 @@ input {
 
 .wb-switcher__forget:hover {
   color: var(--error);
-}
-
-.wb-tabbar--disabled .wb-tab {
-  color: var(--muted);
-  cursor: default;
-  opacity: 0.6;
 }
 
 /* -- DropOverlay: the fixed drag-and-drop hint ---------------------------- */
@@ -1338,6 +2077,7 @@ input {
 @media (max-width: 900px) {
   .wb-chat-full {
     grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 }
 
@@ -1355,6 +2095,44 @@ input {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.wb-chat-titles {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 12px;
+}
+
+.wb-chat-title {
+  min-width: 0;
+}
+
+.wb-chat-title .button {
+  align-self: flex-start;
+}
+
+.wb-chat-title p {
+  margin: 4px 0 0;
+}
+
+/* Keep the new controls reachable without pushing the transcript and
+ * composer off a narrow screen. The rail itself scrolls when needed. */
+@media (max-width: 900px) {
+  .wb-chat-rail {
+    border-bottom: 1px solid var(--border);
+    border-right: 0;
+    display: grid;
+    gap: 12px 20px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 42vh;
+  }
+
+  .wb-chat-rail__section:first-child {
+    grid-row: span 3;
+  }
 }
 
 .wb-chat-rail__chats {
@@ -1413,6 +2191,27 @@ input {
   color: var(--fg);
 }
 
+.wb-chat-header .picker {
+  flex: 0 1 220px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.picker--typed {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.picker--typed .picker__input {
+  min-width: 0;
+  width: 100%;
+}
+
+.picker--typed .button {
+  flex: none;
+}
+
 .wb-chat-header__toggle {
   display: inline-flex;
   gap: 2px;
@@ -1425,7 +2224,7 @@ input {
   border-bottom: 2px solid transparent;
   color: var(--muted);
   cursor: pointer;
-  font: 12px var(--mono);
+  font: 12px/1.5 var(--ui);
   padding: 2px 8px;
 }
 
@@ -1834,6 +2633,7 @@ input {
 .wb-jobs__actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-end;
   gap: 6px;
 }
 
@@ -1875,7 +2675,7 @@ input {
   align-items: center;
   display: flex;
   gap: 2px;
-  font-size: 12px;
+  font: 12px/1.5 var(--ui);
 }
 
 .wb-ledger__toggle-btn {
@@ -2001,10 +2801,11 @@ input {
 
 .wb-ledger__filter select {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
   color: var(--fg);
   font: inherit;
+  height: var(--control-h-sm);
   padding: 1px 6px;
 }
 
@@ -2099,8 +2900,8 @@ input {
 
 .wb-files__tree-head {
   color: var(--muted);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.08em;
+  font: 600 11px/1.3 var(--ui);
+  letter-spacing: 0.06em;
   margin-bottom: 2px;
   text-transform: uppercase;
 }
@@ -2701,11 +3502,12 @@ input {
 
 .wb-editor__button {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   color: var(--fg);
   cursor: pointer;
-  font: inherit;
+  font: 12px/1.5 var(--ui);
+  min-height: var(--control-h-sm);
   padding: 2px 10px;
 }
 
@@ -2824,11 +3626,12 @@ input {
 
 .wb-rail__input {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   color: var(--fg);
   flex: 1 1 auto;
   font: 11px var(--mono);
+  height: var(--control-h-sm);
   min-width: 0;
   padding: 3px 8px;
 }
@@ -2992,8 +3795,8 @@ input {
 
 .wb-spend__figure-name {
   color: var(--muted);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.06em;
+  font: 600 11px var(--ui);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -3019,7 +3822,7 @@ input {
 }
 
 .wb-ledger__node:focus-visible rect {
-  stroke: var(--accent);
+  stroke: var(--focus);
   stroke-width: 3;
 }
 button.wb-ledger__version-row {
@@ -3030,6 +3833,92 @@ button.wb-ledger__version-row {
   cursor: pointer;
 }
 button.wb-ledger__version-row:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* A modal chooser over the existing pages and commands. Its own scrolling
+   keeps the focused search and close control visible on small screens. */
+.wb-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: min(10vh, 80px) var(--space-3) var(--space-3);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+}
+
+.wb-palette {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(620px, 100%);
+  max-height: 80vh;
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r2);
+  background: var(--panel);
+  color: var(--fg);
+  font: 14px/1.5 var(--ui);
+}
+
+.wb-palette__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.wb-palette__head h2 {
+  margin: 0;
+  font: 600 16px/1.5 var(--ui);
+}
+
+.wb-palette > input {
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.wb-palette > .panel__note {
+  margin: 0;
+}
+
+.wb-palette__list {
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-palette__option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 var(--space-3);
+  padding: var(--space-2);
+  border-inline-start: 3px solid transparent;
+  cursor: pointer;
+}
+
+.wb-palette__option[aria-selected="true"] {
+  border-inline-start-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.wb-palette__label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.wb-palette__kind,
+.wb-palette__detail {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wb-palette__detail {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
 }

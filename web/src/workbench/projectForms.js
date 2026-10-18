@@ -71,3 +71,7 @@ export function filterObligations(values, status='outstanding') {
   const outstanding = new Set(['open','investigating','blocked']);
   return values.filter((value) => status === 'all' || (status === 'outstanding' ? outstanding.has(value.status) : value.status === status));
 }
+
+// Values for a menu whose labels are the words themselves.
+export const plain = (words) => words.map((word) => ({value:word,label:word}));
+export const JUDGMENTS = [{value:'unresolved',label:'Unresolved'},{value:'approved',label:'Approved'},{value:'disputed',label:'Disputed'}];

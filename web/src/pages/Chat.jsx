@@ -1,5 +1,5 @@
 // Chat: the transcript surface. Mounted once by `Shell` regardless of the
-// active tab (see `workbench/Dock.jsx`), and shown full width -- rail,
+// active page (see `workbench/Dock.jsx`), and shown full width -- rail,
 // header, transcript, composer -- only when the route is actually `chat` or
 // `tree`; docked beside another page it draws just the header, transcript
 // and composer, because a 200px rail would eat half of a 380px dock.
@@ -21,6 +21,7 @@ import Facts from '../components/Facts.jsx';
 import Label from '../components/Label.jsx';
 import Composer from '../chat/Composer.jsx';
 import Header from '../chat/Header.jsx';
+import ChatTitles from '../chat/ChatTitles.jsx';
 import Transcript from '../chat/Transcript.jsx';
 import {headerStats, isAbandon, isFork} from '../chat/tree.js';
 import useHash from '../session/useHash.js';
@@ -29,20 +30,22 @@ import useSession from '../session/useSession.js';
 
 export default function Chat({onPeek}) {
   const {
-    status, commands, messages, prompts, draft, refusal, runningTool, revision, loaded,
-    send, answer, cancel, setDraft, blocked,
+    status, commands, messages, prompts, draft, composeFocus, refusal, runningTool, revision, loaded,
+    send, answer, cancel, setDraft, blocked, refreshProjects,
   } = useSession();
   const [route, go] = useHash();
   const fullWidth = route.page === 'chat' || route.page === 'tree';
 
   const summary = usePanel('/api/summary', revision);
-  const chats = usePanel('/api/chats', revision);
+  const chats = usePanel('/api/chats', revision, status.path);
   const tree = usePanel('/api/tree', revision);
   const jobs = usePanel('/api/jobs', revision);
-  const models = usePanel('/api/models', revision);
+  const models = usePanel('/api/models', revision, status.path);
   const graph = usePanel('/api/graph', revision);
 
   const busy = status.turn_running || status.command_running;
+  const opening = route.page === 'chat' && route.arg && route.arg !== status.chat;
+  const editingBlocked = busy || status.provider_active || opening;
 
   // Home's chat table and this page's own rail both link to `#/chat/<id>`;
   // this is what makes following one actually switch chats -- the same
@@ -51,6 +54,7 @@ export default function Chat({onPeek}) {
   // client-side route change.
   const [openError, setOpenError] = useState('');
   useEffect(() => {
+    setOpenError('');
     if (route.page !== 'chat' || !route.arg || route.arg === status.chat) return undefined;
     let live = true;
     post('/api/open', {path: status.path, chat: route.arg})
@@ -115,7 +119,8 @@ export default function Chat({onPeek}) {
 
   const main = (
     <div className="wb-chat-main">
-      <Header chatLabel={status.chat || 'main'} running={running} entries={entries} lines={lines} active={route.page} go={go} />
+      <Header chatLabel={status.chat || 'main'} running={running} entries={entries} lines={lines} active={route.page} go={go}
+        model={status.model} busy={editingBlocked} revision={revision} onSend={send} owner={status.path} chat={status.chat}/>
       {(summary.data.goal || '').trim() ? null : (
         <div className="panel__note">
           No goal is set for this project. Describe it here, or run /goal. Nothing below is blocked on it.
@@ -131,6 +136,8 @@ export default function Chat({onPeek}) {
       />
       <Composer
         draft={draft}
+        composeFocus={composeFocus}
+        page={route.page}
         commands={commands}
         busy={busy}
         queued={status.queued ?? 0}
@@ -171,6 +178,9 @@ export default function Chat({onPeek}) {
             ))}
           </div>
           {openError ? <div className="wb-chat-rail__error">{openError}</div> : null}
+          <ChatTitles key={`${status.path}/${status.chat}/${route.arg}`} slug={status.slug} chat={status.chat}
+            currentChat={currentChat} disabled={editingBlocked} onOpen={(id) => go({page:'chat',arg:id})}
+            onRefresh={async () => {chats.reload();await refreshProjects();}}/>
         </div>
 
         <div className="wb-chat-rail__section">
