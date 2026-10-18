@@ -57,23 +57,37 @@ def snapshot_environment(project: Path, lean_command: tuple[str, ...], *, expect
                 for name in METADATA_FILES if (project / name).is_file()}
     if "lean-toolchain" not in metadata:
         raise ValueError("Pinned lean-toolchain is unavailable")
-    lake = subprocess.run([lean_command[0], "--version"], cwd=project, capture_output=True, timeout=COMMAND_SECONDS, check=False)
-    if lake.returncode or not lake.stdout.strip():
-        raise ValueError("Actual Lake version is unavailable")
+    lake_version = _lake_version(project, lean_command[0])
     packages_dir = str(manifest.get("packagesDir", ".lake/packages"))
     result: dict[str, Any] = {"lean_version": version, "lean_commit": commit,
-        "lake_version": lake.stdout.decode().strip(), "metadata": metadata,
+        "lake_version": lake_version, "metadata": metadata,
         "metadata_bytes": {name: read_bytes(project, name).decode() for name in metadata},
         "project_sources": replay_runtime.source_inventory(project), "project_compiled": replay_runtime.compiled_inventory(project),
         "compiled_cache_captured_at": "export", "compiled_cache_source_derivation": "not_independently_established",
         "packages": [_pinned_package(project, packages_dir, package) for package in packages]}
     mathlib = next((value["revision"] for value in result["packages"] if value["name"] == "mathlib"), None)
     result["mathlib_revision"] = mathlib
-    if expected is not None and (version != expected["lean_version"] or commit != expected["lean_commit"]
-            or hashlib.sha256(raw).hexdigest() != expected["lake_manifest_sha256"]
-            or mathlib != expected["mathlib_revision"]):
-        raise ValueError("Current environment mismatch historical formal evidence")
+    _check_historical_environment(result, hashlib.sha256(raw).hexdigest(), expected)
     return result
+
+
+def _lake_version(project: Path, lake_command: str) -> str:
+    lake = subprocess.run([lake_command, "--version"], cwd=project, capture_output=True, timeout=COMMAND_SECONDS, check=False)
+    if lake.returncode or not lake.stdout.strip():
+        raise ValueError("Actual Lake version is unavailable")
+    return lake.stdout.decode().strip()
+
+
+def _check_historical_environment(
+    current: Mapping[str, Any], manifest_sha256: str, expected: Mapping[str, Any] | None
+) -> None:
+    if expected is not None and (
+        current["lean_version"] != expected["lean_version"]
+        or current["lean_commit"] != expected["lean_commit"]
+        or manifest_sha256 != expected["lake_manifest_sha256"]
+        or current["mathlib_revision"] != expected["mathlib_revision"]
+    ):
+        raise ValueError("Current environment mismatch historical formal evidence")
 
 
 def _pinned_package(project: Path, packages_dir: str, package: object) -> dict[str, Any]:
