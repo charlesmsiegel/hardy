@@ -442,6 +442,11 @@ class Usage:
             if reconciled:
                 return self
             return dataclasses.replace(self, turns=self.turns + 1, pending_workflow_calls=(*pending, call))
+        return self._record_report(report, call)
+
+    def _record_report(self, report: ExchangeReport, call: str | None) -> Usage:
+        """Settle a reported exchange, filling a prior workflow liability if one exists."""
+        reconciled = call is not None and call in self.pending_workflow_calls
         session = report.session_id or self.provider_session
         reading = _Reading.of(report)
         tokens_continue, cost_continues = reading.continues(self.baselines, switched=session != self.provider_session)
@@ -464,7 +469,7 @@ class Usage:
         return dataclasses.replace(
             self,
             turns=self.turns + (0 if reconciled else 1),
-            pending_workflow_calls=tuple(value for value in pending if value != call),
+            pending_workflow_calls=tuple(value for value in self.pending_workflow_calls if value != call),
             cost_usd=spent,
             baselines={**baselines, **reading.stated, **reading.model},
             provider_session=session,

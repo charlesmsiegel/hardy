@@ -361,18 +361,8 @@ class ClaudeStagedRuntime:
         # Without them `lean_check_proof` answered `unknown identifier` for
         # every axiom the run was standing on, which tells a model its proof
         # is wrong when the environment is what differed.
-        lean_runtime = None
-        if claim is not None and not isolated:
-            if self._proof_tools is not None:
-                prior_claim, prior_allowed, lean_runtime = self._proof_tools
-                if claim != prior_claim or tuple(allowed) != prior_allowed:
-                    raise ValueError("a bound proof runtime cannot change its frozen claim or assumptions")
-            else:
-                lean_runtime = self._lean_runtime_factory(claim, tuple(allowed))
-                if self._proof_budget is not None:
-                    lean_runtime.bind_budget(self._proof_budget)
-                    self._proof_tools = (claim, tuple(allowed), lean_runtime)
-        specs: list[Any] = [] if isolated else list(TOOLS) if lean_runtime is not None else []
+        lean_runtime = self._proof_runtime(claim, allowed) if claim is not None and not isolated else None
+        specs: list[Any] = list(TOOLS) if lean_runtime is not None else []
         if self._cas is not None and not isolated:
             specs = specs + CAS_TOOLS
         runtime = self._runtime_class(
@@ -398,6 +388,19 @@ class ClaudeStagedRuntime:
         thread = StagedThread(runtime=runtime, claim=claim, phase=phase)
         self._threads.append(thread)
         return thread
+
+    def _proof_runtime(self, claim: FrozenClaim, allowed: Sequence[DeclaredAssumption]) -> Any:
+        """Reuse the bound claim's tools across conversations without replenishing its budget."""
+        if self._proof_tools is not None:
+            prior_claim, prior_allowed, lean_runtime = self._proof_tools
+            if claim != prior_claim or tuple(allowed) != prior_allowed:
+                raise ValueError("a bound proof runtime cannot change its frozen claim or assumptions")
+            return lean_runtime
+        lean_runtime = self._lean_runtime_factory(claim, tuple(allowed))
+        if self._proof_budget is not None:
+            lean_runtime.bind_budget(self._proof_budget)
+            self._proof_tools = (claim, tuple(allowed), lean_runtime)
+        return lean_runtime
 
     def _cas_dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if self._cas is None:
