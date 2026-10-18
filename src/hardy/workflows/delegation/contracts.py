@@ -42,12 +42,39 @@ TERMINAL_STATES = frozenset({
 
 
 class CoordinationPolicy(str, Enum):
+    """How a delegation exchanges work with its peers; no mathematical authority."""
     INDEPENDENT = "independent"
     SHARED = "shared"
     CELL = "cell"
     COMPETITIVE = "competitive"
     ADVERSARIAL = "adversarial"
     PIPELINE = "pipeline"
+
+
+class TaskMode(str, Enum):
+    """Recognized research intentions within an open vocabulary of task labels.
+
+    Specs retain the caller's label verbatim after ordinary Text validation.
+    Recognition supports mechanical policy; an unfamiliar label remains custom
+    work, never an inferred verification instruction or a rejected brief.
+    """
+
+    PROVE = "prove"
+    REFUTE = "refute"
+    ADJUDICATE = "adjudicate"
+    CRITIQUE = "critique"
+    VERIFY = "verify"
+    REDUCE = "reduce"
+    COMPUTE = "compute"
+    GENERALIZE = "generalize"
+
+    @classmethod
+    def recognize(cls, label: str) -> TaskMode | None:
+        """Read a known intention without normalizing or closing custom labels."""
+        try:
+            return cls(label)
+        except ValueError:
+            return None
 
 
 class ResourceLease(FrozenModel):
@@ -183,6 +210,7 @@ class DelegationSpec(FrozenModel):
     #: computation, which reads no project state at all.
     scope: VersionRef | None = None
     context: VersionRef | None = None
+    #: Open persisted label; TaskMode recognizes the intentions understood by policy.
     task_mode: Text = "prove"
     lease: ResourceLease
     concurrency: ConcurrencyLease

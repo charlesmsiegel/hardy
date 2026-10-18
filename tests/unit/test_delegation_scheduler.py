@@ -68,6 +68,9 @@ def test_default_lane_follows_the_brief_not_a_score():
     assert default_lane(_spec(task_mode="adjudicate")) is Lane.VERIFY
     assert default_lane(_spec(lane="explore")) is Lane.EXPLORE
     assert default_lane(_spec(lane="user_pinned")) is Lane.USER_PINNED
+    assert default_lane(_spec(task_mode="custom-review")) is Lane.EXPLOIT
+    assert default_lane(_spec(task_mode="VERIFY")) is Lane.EXPLOIT
+    assert default_lane(_spec(task_mode="custom-review", lane="verify")) is Lane.VERIFY
 
 
 def test_ready_excludes_started_terminal_forbidden_and_exhausted_work(tmp_path):

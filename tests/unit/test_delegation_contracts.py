@@ -12,6 +12,7 @@ from hardy.workflows.delegation.contracts import (
     ResourceLease,
     ResourceUsage,
     SpawnPolicy,
+    TaskMode,
     WorkerResult,
 )
 from hardy.workflows.ledger.contracts import VersionRef
@@ -89,3 +90,13 @@ def test_worker_result_requires_terminal_status():
         WorkerResult(delegation_id="d-1", status=DelegationState.ACTIVE, synthesis="x", usage=ResourceUsage())
     result = WorkerResult(delegation_id="d-1", status=DelegationState.COMPLETED, synthesis="done", usage=ResourceUsage())
     assert result.findings == () and result.change_set is None
+
+
+def test_custom_task_mode_keeps_its_serialized_identity():
+    spec = DelegationSpec(objective="custom work", project_refs=(), task_mode="custom-review",
+                          lease=ResourceLease(), concurrency=ConcurrencyLease(slots=1), created_by="human")
+    assert TaskMode.recognize(spec.task_mode) is None
+    assert spec.model_dump(mode="json")["task_mode"] == "custom-review"
+    assert spec.digest == "f9ce6799f64864361f119b0162681765edf2fecfe9fcb018d2a8139fc03e9ce0"
+    assert TaskMode.recognize("verify") is TaskMode.VERIFY
+    assert TaskMode.recognize("VERIFY") is None

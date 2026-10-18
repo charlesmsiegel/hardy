@@ -26,6 +26,7 @@ from hardy.workflows.delegation.contracts import (
     DelegationState,
     ResourceDelta,
     ResourceLease,
+    TaskMode,
 )
 from hardy.workflows.delegation.findings import FindingLedger
 from hardy.workflows.delegation.replay import DelegationTree
@@ -42,14 +43,14 @@ class Lane(str, Enum):
     BLOCKER = "blocker"
 
 
-_VERIFY_MODES = frozenset({"refute", "adjudicate", "critique", "verify"})
+_VERIFY_MODES = frozenset({TaskMode.REFUTE, TaskMode.ADJUDICATE, TaskMode.CRITIQUE, TaskMode.VERIFY})
 
 
 def default_lane(spec: DelegationSpec) -> Lane:
     """A lane from what the brief asked for, never from how promising it looks."""
     if spec.lane:
         return Lane(spec.lane)
-    if spec.task_mode in _VERIFY_MODES:
+    if TaskMode.recognize(spec.task_mode) in _VERIFY_MODES:
         return Lane.VERIFY
     return Lane.EXPLOIT
 
