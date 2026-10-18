@@ -61,6 +61,7 @@ from hardy.workflows.delegation.contracts import (
 )
 from hardy.workflows.delegation.diversity import assign_briefs
 from hardy.workflows.delegation.findings import Finding, FindingLedger
+from hardy.workflows.delegation.replay import DelegationTree
 from hardy.workflows.delegation.retrieval import VisibilityPolicy, WorkerRetriever
 from hardy.workflows.delegation.scheduler import (
     AllocationRequest,
@@ -73,7 +74,7 @@ from hardy.workflows.delegation.scheduler import (
     SchedulerDecision,
     graph_urgency,
 )
-from hardy.workflows.delegation.store import DelegationStore, DelegationTree, OwnerToken
+from hardy.workflows.delegation.store import DelegationStore, OwnerToken
 from hardy.workflows.delegation.worker import (
     CasFactory,
     OpenWorker,

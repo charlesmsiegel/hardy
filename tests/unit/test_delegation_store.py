@@ -13,6 +13,7 @@ from hardy.workflows.delegation.contracts import (
     ResourceUsage,
     WorkerResult,
 )
+from hardy.workflows.delegation.replay import replay
 from hardy.workflows.delegation.store import DelegationStore
 from hardy.workflows.ledger.contracts import VersionRef
 
@@ -72,6 +73,22 @@ def test_terminal_event_records_result_and_refuses_further_progress(tmp_path):
         store.append("d-1", "delegation.cancelled", {"reason": "late"})
     with pytest.raises(ValueError, match="unknown delegation"):
         store.append("ghost", "delegation.started", {})
+
+
+def test_failed_incremental_replay_does_not_mutate_its_verified_base(tmp_path):
+    store = DelegationStore(tmp_path)
+    _create(store, "d-1")
+    store.append("d-1", "delegation.started", {})
+    before = store.tree()
+    stopped = store.append("d-1", "delegation.cancelled", {"reason": "user"})
+    late = stopped.model_copy(update={"kind": "delegation.progress", "payload": {"note": "late"}})
+
+    with pytest.raises(ValueError, match="progress on terminal"):
+        replay((stopped, late), before)
+
+    assert before.get("d-1").state is DelegationState.ACTIVE
+    assert before.revision == 2
+    assert store.tree().get("d-1").state is DelegationState.CANCELLED
 
 
 def test_usage_reports_accumulate_per_delegation_and_keep_unknown(tmp_path):

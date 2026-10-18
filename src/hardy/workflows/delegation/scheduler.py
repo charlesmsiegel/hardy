@@ -28,7 +28,7 @@ from hardy.workflows.delegation.contracts import (
     ResourceLease,
 )
 from hardy.workflows.delegation.findings import FindingLedger
-from hardy.workflows.delegation.store import DelegationTree
+from hardy.workflows.delegation.replay import DelegationTree
 from hardy.workflows.ledger.contracts import Obligation, ObligationStatus, ProjectItem, VersionRef
 from hardy.workflows.ledger.graph import LedgerGraph
 from hardy.workflows.ledger.state import LedgerSnapshot

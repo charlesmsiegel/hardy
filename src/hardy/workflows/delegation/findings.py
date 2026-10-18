@@ -23,8 +23,9 @@ from hardy.workflows.delegation.contracts import (
     DelegationSpec,
     ResourceLease,
 )
+from hardy.workflows.delegation.replay import DelegationTree
 from hardy.workflows.delegation.retrieval import VisibilityPolicy
-from hardy.workflows.delegation.store import DelegationStore, DelegationTree
+from hardy.workflows.delegation.store import DelegationStore
 from hardy.workflows.ledger.contracts import Text, VersionRef
 
 

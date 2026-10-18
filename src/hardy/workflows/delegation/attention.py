@@ -19,7 +19,8 @@ from typing import Literal
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.delegation.contracts import DelegationEvent, DelegationState, WorkerResult
 from hardy.workflows.delegation.findings import Finding, FindingKind
-from hardy.workflows.delegation.store import DelegationStore, DelegationTree
+from hardy.workflows.delegation.replay import DelegationTree
+from hardy.workflows.delegation.store import DelegationStore
 from hardy.workflows.ledger.contracts import Text, VersionRef
 
 MODEL_MARKER = "[Hardy delegation attention — written by Hardy, not the user]"

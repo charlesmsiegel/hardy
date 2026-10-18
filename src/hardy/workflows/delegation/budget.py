@@ -17,7 +17,7 @@ from hardy.workflows.delegation.contracts import (
     ResourceLease,
     ResourceUsage,
 )
-from hardy.workflows.delegation.store import DelegationTree
+from hardy.workflows.delegation.replay import DelegationTree
 
 #: Dimensions a worker cannot overrun: its timer stops it at `active_seconds`
 #: and its `CheckBudget` at `official_checks`. Where its usage there is

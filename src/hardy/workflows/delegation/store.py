@@ -11,44 +11,29 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.locking import FileLock
+from hardy.workflows.delegation.budget import LeaseLedger, LeaseRefused
 from hardy.workflows.delegation.contracts import (
     DIMENSIONS,
     Delegation,
     DelegationEvent,
-    DelegationSpec,
     DelegationState,
-    ResourceUsage,
-    WorkerResult,
+    ResourceLease,
 )
+from hardy.workflows.delegation.replay import DelegationTree as DelegationTree
+from hardy.workflows.delegation.replay import replay as _replay
 from hardy.workflows.storage import RunStore
 
 DIRECTORY = "delegations"
 JOURNAL = "journal.jsonl"
-
-_STATE_EVENTS = {
-    "delegation.started": DelegationState.ACTIVE,
-    "delegation.paused": DelegationState.PAUSED,
-    "delegation.resumed": DelegationState.ACTIVE,
-    "delegation.waiting": DelegationState.WAITING,
-    "delegation.completed": DelegationState.COMPLETED,
-    "delegation.partial": DelegationState.PARTIAL,
-    "delegation.failed": DelegationState.FAILED,
-    "delegation.cancelled": DelegationState.CANCELLED,
-    "delegation.exhausted": DelegationState.EXHAUSTED,
-    "delegation.recovered": DelegationState.UNKNOWN,
-}
-
-_CONTEXT_KEYS = ("problem_core_digest", "research_brief_digest", "context_manifest_id")
 
 #: What a dead process may have been in the middle of. A pause holds no worker and no
 #: slot, so it is a control that survives a restart rather than work to doubt.
@@ -57,125 +42,6 @@ INTERRUPTIBLE = frozenset({DelegationState.ACTIVE, DelegationState.WAITING})
 
 #: A delegation id is one path segment; the store never joins anything else onto the journal directory.
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}")
-
-
-class DelegationTree:
-    """Derived state over one journal replay; read-only."""
-
-    def __init__(self, delegations: dict[str, Delegation], usage: dict[str, ResourceUsage],
-                 events: tuple[DelegationEvent, ...], cancel_requests: frozenset[str] = frozenset()) -> None:
-        self.delegations: Mapping[str, Delegation] = MappingProxyType(delegations)
-        self.usage_reported: Mapping[str, ResourceUsage] = MappingProxyType(usage)
-        self.events = events
-        self._cancel_requests = cancel_requests
-        self._started: frozenset[str] = frozenset()
-
-    def cancel_requested(self, id: str) -> bool:
-        self.get(id)
-        return id in self._cancel_requests
-
-    @property
-    def revision(self) -> int:
-        return len(self.events)
-
-    @property
-    def roots(self) -> tuple[str, ...]:
-        return tuple(d.id for d in self.delegations.values() if d.parent_id is None)
-
-    def get(self, id: str) -> Delegation:
-        try:
-            return self.delegations[id]
-        except KeyError:
-            raise ValueError(f"unknown delegation: {id}") from None
-
-    def children(self, id: str) -> tuple[str, ...]:
-        return self.get(id).children
-
-    def descendants(self, id: str) -> tuple[str, ...]:
-        found: list[str] = []
-        pending = list(self.children(id))
-        while pending:
-            child = pending.pop(0)
-            found.append(child)
-            pending.extend(self.children(child))
-        return tuple(found)
-
-    def ancestors(self, id: str) -> tuple[str, ...]:
-        chain = []
-        parent = self.get(id).parent_id
-        while parent is not None:
-            chain.append(parent)
-            parent = self.get(parent).parent_id
-        return tuple(chain)
-
-
-def _replay(events: tuple[DelegationEvent, ...], before: DelegationTree | None = None) -> DelegationTree:
-    delegations = dict(before.delegations) if before else {}
-    usage = dict(before.usage_reported) if before else {}
-    cancel_requests = set(before._cancel_requests) if before else set()
-    started = set(before._started) if before else set()
-    for event in events:
-        id = event.delegation_id
-        if event.kind == "delegation.created":
-            if id in delegations:
-                raise ValueError(f"journal creates delegation twice: {id}")
-            parent = event.payload.get("parent_id")
-            if parent is not None and parent not in delegations:
-                raise ValueError(f"journal names unknown parent {parent!r} for {id}")
-            spec = DelegationSpec.model_validate(event.payload["spec"])
-            root, depth = (id, 0) if parent is None else (
-                delegations[parent].root_id, delegations[parent].depth + 1)
-            delegations[id] = Delegation.create(id, spec, parent_id=parent,
-                                                created_at=str(event.payload["created_at"]),
-                                                root_id=root, depth=depth)
-            usage[id] = ResourceUsage()
-            if parent is not None:
-                delegations[parent] = delegations[parent].model_copy(
-                    update={"children": (*delegations[parent].children, id)})
-            continue
-        if id not in delegations:
-            raise ValueError(f"journal event for unknown delegation: {id}")
-        current = delegations[id]
-        if event.kind == "usage.reported":
-            usage[id] = usage[id] + ResourceUsage.model_validate(event.payload["usage"])
-            continue
-        if event.kind == "cancel.requested":
-            if current.terminal:
-                raise ValueError(f"journal requests cancellation of terminal delegation {id}")
-            cancel_requests.add(id)
-            continue
-        if event.kind == "budget.released" and not current.terminal:
-            raise ValueError(f"journal releases the reservation of non-terminal delegation {id}")
-        if event.kind in _STATE_EVENTS:
-            if current.terminal:
-                raise ValueError(f"journal continues terminal delegation {id} with {event.kind}")
-            if event.kind == "delegation.started":
-                started.add(id)
-            update: dict[str, Any] = {"state": _STATE_EVENTS[event.kind]}
-            if event.kind == "delegation.started" and event.payload.get("interior"):
-                update["interior"] = True
-            if event.kind == "delegation.started" and event.payload.get("owner"):
-                update["owner"] = str(event.payload["owner"])
-            if event.kind == "delegation.resumed" and id not in started:
-                update["state"] = DelegationState.QUEUED     # never started: back to the queue
-            if "result" in event.payload:
-                update["result"] = WorkerResult.model_validate(event.payload["result"])
-            if "reason" in event.payload:
-                update["terminal_reason"] = str(event.payload["reason"])
-            if event.kind == "delegation.recovered":
-                update["terminal_reason"] = "interrupted"
-                usage[id] = usage[id] + ResourceUsage(unknown=DIMENSIONS)
-            delegations[id] = current.model_copy(update=update)
-            continue
-        if event.kind == "delegation.progress" and current.terminal:
-            raise ValueError(f"journal reports progress on terminal delegation {id}")
-        if event.kind == "delegation.context":
-            delegations[id] = current.model_copy(update={
-                key: str(event.payload[key]) for key in _CONTEXT_KEYS if key in event.payload})
-    tree = DelegationTree(delegations, usage, (*before.events, *events) if before else events,
-                          frozenset(cancel_requests))
-    tree._started = frozenset(started)
-    return tree
 
 
 def _refuse_overspawn(tree: DelegationTree, event: DelegationEvent) -> None:
@@ -238,9 +104,6 @@ class OwnerToken:
 
 def _refuse_overdraft(tree: DelegationTree, delegation_id: str, event: DelegationEvent) -> None:
     """A reservation may only take what its parent can still allocate at the moment it is recorded."""
-    from hardy.workflows.delegation.budget import LeaseLedger, LeaseRefused
-    from hardy.workflows.delegation.contracts import ResourceLease
-
     node = tree.get(delegation_id)
     if node.parent_id is None:
         return
@@ -284,11 +147,7 @@ class DelegationStore:
         return self._cached_tree.events
 
     def _snapshot(self) -> DelegationTree:
-        tree = self._cached_tree
-        result = DelegationTree(deepcopy(dict(tree.delegations)), deepcopy(dict(tree.usage_reported)),
-                                deepcopy(tree.events), tree._cancel_requests)
-        result._started = tree._started
-        return result
+        return self._cached_tree.detached()
 
     def _guard(self, *, create: bool) -> WriteGuard:
         root = WriteGuard(self.workspace, create=create)
