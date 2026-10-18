@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Collection
+from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 from typing import Literal
@@ -135,6 +136,31 @@ def graph_urgency(snapshot: LedgerSnapshot, ref: VersionRef) -> GraphUrgency:
 Urgency = Callable[[Delegation], GraphUrgency | None]
 
 
+@dataclass
+class _ReadySelection:
+    """One dispatch selection: ordered lane queues and a shared cap on chosen leaves."""
+
+    limit: int
+    lanes: dict[Lane, list[Delegation]]
+    chosen: list[Delegation] = field(default_factory=list)
+
+    def take(self, lane: Lane, count: int) -> None:
+        while count > 0 and self.lanes[lane] and len(self.chosen) < self.limit:
+            self.chosen.append(self.lanes[lane].pop(0))
+            count -= 1
+
+    def reserve(self, scope: set[str], count: int) -> None:
+        """Honor a subtree's attention pin without promoting it to mathematical evidence."""
+        for lane in Lane:
+            while count > 0 and len(self.chosen) < self.limit:
+                inside = next((d for d in self.lanes[lane] if d.id in scope), None)
+                if inside is None:
+                    break
+                self.lanes[lane].remove(inside)
+                self.chosen.append(inside)
+                count -= 1
+
+
 class Scheduler:
     def __init__(self, tree: DelegationTree, ledger: LeaseLedger, *, constraints: PortfolioConstraints,
                  pins: tuple[Pin, ...], lanes: dict[str, Lane] | None = None,
@@ -199,15 +225,10 @@ class Scheduler:
             by_lane[self.lane(delegation)].append(delegation)
         for lane in by_lane:
             by_lane[lane] = self._ordered(by_lane[lane])
-        chosen: list[Delegation] = []
+        selection = _ReadySelection(free_slots, by_lane)
 
-        def take(lane: Lane, count: int) -> None:
-            while count > 0 and by_lane[lane] and len(chosen) < free_slots:
-                chosen.append(by_lane[lane].pop(0))
-                count -= 1
-
-        take(Lane.USER_PINNED, free_slots)
-        take(Lane.BLOCKER, free_slots)
+        selection.take(Lane.USER_PINNED, free_slots)
+        selection.take(Lane.BLOCKER, free_slots)
         # A `min_attention` pin holds `value` of the free slots for a subtree
         # (or a leaf), whatever lane its ready work sits in.
         for pin in self.pins:
@@ -215,14 +236,7 @@ class Scheduler:
                 continue
             scope = {pin.delegation_id, *self.tree.descendants(pin.delegation_id)}
             need = pin.value if pin.value is not None else 1
-            for lane in Lane:
-                while need > 0 and len(chosen) < free_slots:
-                    inside = next((d for d in by_lane[lane] if d.id in scope), None)
-                    if inside is None:
-                        break
-                    by_lane[lane].remove(inside)
-                    chosen.append(inside)
-                    need -= 1
+            selection.reserve(scope, need)
         total = self.ledger.slots(self.tree.roots[0]) if self.tree.roots else free_slots
         # A floor is a share of all slots, so what already runs in the lane
         # counts toward it: only the deficit is taken from the free ones.
@@ -236,13 +250,13 @@ class Scheduler:
                        if pin.kind == "reserve_exploration")
         if not self.constraints.collapse_exploration or reserved:
             wanted = max(reserved, math.ceil(total * self.constraints.exploration_floor))
-            take(Lane.EXPLORE, max(0, wanted - running[Lane.EXPLORE]))
-        take(Lane.VERIFY, max(0, math.ceil(total * self.constraints.verify_floor) - running[Lane.VERIFY]))
+            selection.take(Lane.EXPLORE, max(0, wanted - running[Lane.EXPLORE]))
+        selection.take(Lane.VERIFY, max(0, math.ceil(total * self.constraints.verify_floor) - running[Lane.VERIFY]))
         for lane in (Lane.EXPLOIT, Lane.VERIFY, Lane.EXPLORE):
             if lane is Lane.EXPLORE and self.constraints.collapse_exploration and by_lane[Lane.EXPLOIT]:
                 continue
-            take(lane, free_slots)
-        return tuple(chosen[:free_slots])
+            selection.take(lane, free_slots)
+        return tuple(selection.chosen[:free_slots])
 
     # -- tranches ---------------------------------------------------------------------
 

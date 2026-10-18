@@ -74,6 +74,32 @@ _ROUTES: dict[str, Route] = {
     "question": "question", "note": "note", "formalization": "note",
 }
 
+@dataclass(frozen=True)
+class _FindingRoute:
+    """The local item, typed work and optional target relation a finding proposes."""
+
+    suffix: str
+    kind: ProjectItemKind
+    obligations: tuple[ObligationKind, ...] = ()
+    relation: tuple[str, RelationKind] | None = None
+    status: Literal["proposed", "blocked"] = "proposed"
+
+
+_ITEM_ROUTES = {
+    "candidate_lemma": _FindingRoute("lemma", ProjectItemKind.LEMMA,
+                                     (ObligationKind.PROVE, ObligationKind.FORMALIZE),
+                                     ("supports", RelationKind.SUPPORTS)),
+    "counterexample": _FindingRoute("example", ProjectItemKind.EXAMPLE,
+                                    relation=("counterexample", RelationKind.COUNTEREXAMPLE_TO)),
+    "approach": _FindingRoute("approach", ProjectItemKind.APPROACH,
+                              relation=("pursues", RelationKind.PURSUES)),
+    "failed_approach": _FindingRoute("approach", ProjectItemKind.APPROACH,
+                                     relation=("pursues", RelationKind.PURSUES), status="blocked"),
+    "computation": _FindingRoute("computation", ProjectItemKind.COMPUTATION,
+                                 relation=("illustrates", RelationKind.ILLUSTRATES)),
+    "question": _FindingRoute("question", ProjectItemKind.QUESTION),
+}
+
 _CLAIM_KINDS = frozenset({ProjectItemKind.LEMMA, ProjectItemKind.THEOREM, ProjectItemKind.PROPOSITION,
                           ProjectItemKind.COROLLARY, ProjectItemKind.CLAIM, ProjectItemKind.CONJECTURE})
 _TOKEN = re.compile(r"[a-z0-9]+")
@@ -144,53 +170,21 @@ def route_finding(finding: Finding, snapshot: LedgerSnapshot, *, scope: VersionR
         return AdmissionCandidate(id=f"{base}:candidate", finding_ids=(finding.id,), route=route, records=(),
                                   target="authoritative", base_revision=snapshot.revision, change_set=change_set,
                                   subject=target.ref if target is not None else None)
-    if route == "candidate_lemma":
-        item = ProjectItem(id=f"{base}:lemma", kind=ProjectItemKind.LEMMA, name=name, statement=finding.payload or name,
-                           origin=ProjectOrigin.GENERATED_LOCAL, context=context,
-                           research=ResearchState(status="proposed", author=finding.source_delegation))
-        records.append(item)
-        records.append(Obligation(id=f"{base}:prove", item=item.ref, kind=ObligationKind.PROVE, scope=policy,
-                                  context=context))
-        records.append(Obligation(id=f"{base}:formalize", item=item.ref, kind=ObligationKind.FORMALIZE, scope=policy,
-                                  context=context))
-        if target is not None:
-            records.append(Relation(id=f"{base}:supports", kind=RelationKind.SUPPORTS, source=item.ref, target=target.ref))
-        subject = item.ref
-    elif route == "counterexample":
-        item = ProjectItem(id=f"{base}:example", kind=ProjectItemKind.EXAMPLE, name=name,
+    if definition := _ITEM_ROUTES.get(route):
+        item = ProjectItem(id=f"{base}:{definition.suffix}", kind=definition.kind, name=name,
                            statement=finding.payload or name, origin=ProjectOrigin.GENERATED_LOCAL, context=context,
-                           research=ResearchState(status="proposed", author=finding.source_delegation))
-        records.append(item)
-        if target is not None:
-            records.append(Relation(id=f"{base}:counterexample", kind=RelationKind.COUNTEREXAMPLE_TO,
-                                    source=item.ref, target=target.ref))
-        subject = item.ref
-    elif route in {"approach", "failed_approach"}:
-        blocked = route == "failed_approach"
-        item = ProjectItem(id=f"{base}:approach", kind=ProjectItemKind.APPROACH, name=name,
-                           statement=finding.payload or name, origin=ProjectOrigin.GENERATED_LOCAL, context=context,
-                           research=ResearchState(status="blocked" if blocked else "proposed",
-                                                  reason=(finding.payload or name) if blocked else None,
+                           research=ResearchState(status=definition.status,
+                                                  reason=(finding.payload or name) if definition.status == "blocked" else None,
                                                   author=finding.source_delegation))
         records.append(item)
-        if target is not None:
-            kind = RelationKind.PURSUES if target.kind is ProjectItemKind.GOAL else RelationKind.TARGETS
-            records.append(Relation(id=f"{base}:pursues", kind=kind, source=item.ref, target=target.ref))
-        subject = item.ref
-    elif route == "computation":
-        item = ProjectItem(id=f"{base}:computation", kind=ProjectItemKind.COMPUTATION, name=name,
-                           statement=finding.payload or name, origin=ProjectOrigin.GENERATED_LOCAL, context=context,
-                           research=ResearchState(status="proposed", author=finding.source_delegation))
-        records.append(item)
-        if target is not None:
-            records.append(Relation(id=f"{base}:illustrates", kind=RelationKind.ILLUSTRATES, source=item.ref,
-                                    target=target.ref))
-        subject = item.ref
-    elif route == "question":
-        item = ProjectItem(id=f"{base}:question", kind=ProjectItemKind.QUESTION, name=name,
-                           statement=finding.payload or name, origin=ProjectOrigin.GENERATED_LOCAL, context=context,
-                           research=ResearchState(status="proposed", author=finding.source_delegation))
-        records.append(item)
+        for kind in definition.obligations:
+            records.append(Obligation(id=f"{base}:{kind.value}", item=item.ref, kind=kind, scope=policy,
+                                      context=context))
+        if target is not None and definition.relation is not None:
+            suffix, relation = definition.relation
+            if relation is RelationKind.PURSUES and target.kind is not ProjectItemKind.GOAL:
+                relation = RelationKind.TARGETS
+            records.append(Relation(id=f"{base}:{suffix}", kind=relation, source=item.ref, target=target.ref))
         subject = item.ref
     else:
         status = "lead" if route in {"literature_lead", "literature_result"} else "proposed"
@@ -353,38 +347,43 @@ def reconcile(change_set: ChangeSet, workspace: LeanWorkspace, *, head_revision:
     files: list[FileChange] = []
     conflicts: list[Conflict] = []
     for change in change_set.files:
-        relative = PurePosixPath(change.path)
-        head = workspace.read(relative)
-        head_digest = _sha(head) if head is not None else None
-        if change.operation == "create":
-            if head is None:
-                files.append(change)
-            elif head != change.content:
-                conflicts.append(Conflict(path=change.path, base_digest=None, head=head, proposed=change.content))
-            continue
-        if change.operation == "delete":
-            if head is None:
-                continue
-            if head_digest == change.base_digest:
-                files.append(change)
-            else:
-                conflicts.append(Conflict(path=change.path, base_digest=change.base_digest, head=head, proposed=None))
-            continue
-        if head is None:
-            conflicts.append(Conflict(path=change.path, base_digest=change.base_digest, head=None, proposed=change.content))
-        elif head_digest == change.base_digest or head == change.content:
-            if head != change.content:
-                files.append(change.model_copy(update={"base_digest": head_digest, "base_content": head}))
-        else:
-            merged = _merge_three_way(change.base_content or "", head, change.content or "")
-            if merged is None:
-                conflicts.append(Conflict(path=change.path, base_digest=change.base_digest, head=head, proposed=change.content))
-            else:
-                files.append(change.model_copy(update={"base_digest": head_digest, "base_content": head,
-                                                       "content": merged, "result_digest": _sha(merged)}))
+        head = workspace.read(PurePosixPath(change.path))
+        result = _reconcile_file(change, head)
+        if isinstance(result, Conflict):
+            conflicts.append(result)
+        elif result is not None:
+            files.append(result)
     plan = change_set.model_copy(update={"files": tuple(files), "base_project_revision": head_revision,
                                          "base_workspace_digest": workspace_digest(workspace.sources())})
     return plan, tuple(conflicts)
+
+
+def _reconcile_file(change: FileChange, head: str | None) -> FileChange | Conflict | None:
+    """Transplant one file, merge disjoint revisions, or retain the exact conflict."""
+    head_digest = _sha(head) if head is not None else None
+    if change.operation == "create":
+        if head is None:
+            return change
+        if head != change.content:
+            return Conflict(path=change.path, base_digest=None, head=head, proposed=change.content)
+        return None
+    if change.operation == "delete":
+        if head is None:
+            return None
+        if head_digest == change.base_digest:
+            return change
+        return Conflict(path=change.path, base_digest=change.base_digest, head=head, proposed=None)
+    if head is None:
+        return Conflict(path=change.path, base_digest=change.base_digest, head=None, proposed=change.content)
+    if head_digest == change.base_digest or head == change.content:
+        if head != change.content:
+            return change.model_copy(update={"base_digest": head_digest, "base_content": head})
+        return None
+    merged = _merge_three_way(change.base_content or "", head, change.content or "")
+    if merged is None:
+        return Conflict(path=change.path, base_digest=change.base_digest, head=head, proposed=change.content)
+    return change.model_copy(update={"base_digest": head_digest, "base_content": head,
+                                     "content": merged, "result_digest": _sha(merged)})
 
 
 # -- authoritative admission ---------------------------------------------------------------

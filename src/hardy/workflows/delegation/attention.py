@@ -17,7 +17,12 @@ from enum import Enum
 from typing import Literal
 
 from hardy.foundation.values import FrozenModel
-from hardy.workflows.delegation.contracts import DelegationEvent, DelegationState, WorkerResult
+from hardy.workflows.delegation.contracts import (
+    Delegation,
+    DelegationEvent,
+    DelegationState,
+    WorkerResult,
+)
 from hardy.workflows.delegation.findings import Finding, FindingKind
 from hardy.workflows.delegation.replay import DelegationTree
 from hardy.workflows.delegation.store import DelegationStore
@@ -52,6 +57,7 @@ _TERMINAL_KINDS = {
 _TERMINAL_EVENT_KINDS = frozenset({*_TERMINAL_KINDS, "delegation.recovered"})
 
 
+# The attention delivery strength; interruption requires an explicit subscription.
 class DeliveryMode(str, Enum):
     QUEUE = "queue"
     NOTIFY = "notify"
@@ -61,6 +67,7 @@ class DeliveryMode(str, Enum):
 _MODE_RANK = {DeliveryMode.QUEUE: 0, DeliveryMode.NOTIFY: 1, DeliveryMode.INTERRUPT: 2}
 
 
+# A derived request for attention, with per-recipient delivery kept separate from handling.
 class AttentionItem(FrozenModel):
     id: str
     delegation_id: str
@@ -81,12 +88,14 @@ class AttentionItem(FrozenModel):
     delivery: tuple[tuple[Recipient, DeliveryMode], ...] = ()
 
     def mode_for(self, recipient: Recipient, default: DeliveryMode = DeliveryMode.NOTIFY) -> DeliveryMode:
+        """Honor a recipient override before falling back to the caller's delivery mode."""
         for name, mode in self.delivery:
             if name == recipient:
                 return mode
         return default
 
 
+# Evidence that one recipient received an item at a particular conversation position.
 class DeliveryReceipt(FrozenModel):
     item_id: str
     recipient: Recipient
@@ -210,26 +219,34 @@ def derive_item(event: DelegationEvent, tree: DelegationTree, *, force: bool = F
             related_refs=refs, detail_refs=detail, event_kind=event.kind,
         )
     if event.kind in _TERMINAL_KINDS:
-        category, importance = _TERMINAL_KINDS[event.kind]
-        synthesis = ""
-        if "result" in event.payload:
-            synthesis = WorkerResult.model_validate(event.payload["result"]).synthesis
-        reason = event.payload.get("reason")
-        if len(synthesis) > SUMMARY_EXCERPT_CHARS:
-            # A worker writes its synthesis; the summary carries an excerpt and
-            # the whole of it stays behind result.json.
-            synthesis = synthesis[:SUMMARY_EXCERPT_CHARS].rstrip() + " ... (full synthesis in result.json)"
-        tail = synthesis or (f"reason: {reason}" if reason else "")
-        summary = f"{delegation.id} ({delegation.spec.objective}) {delegation.state.value}"
-        if tail:
-            summary += f": {tail}"
-        return AttentionItem(
-            id=item_id, delegation_id=delegation.id, source_event=event.sequence,
-            summary=summary, category=category, importance=importance,
-            actionable=delegation.state in {DelegationState.FAILED, DelegationState.EXHAUSTED},
-            related_refs=refs, detail_refs=detail, event_kind=event.kind,
-        )
+        return _terminal_item(event, delegation)
     return None
+
+
+def _terminal_item(event: DelegationEvent, delegation: Delegation) -> AttentionItem:
+    """Render a bounded terminal summary, retaining the complete synthesis behind its artifact."""
+    item_id = f"attention:{event.sequence}"
+    refs = delegation.spec.project_refs
+    detail = (f"delegations/{delegation.id}/result.json",)
+    category, importance = _TERMINAL_KINDS[event.kind]
+    synthesis = ""
+    if "result" in event.payload:
+        synthesis = WorkerResult.model_validate(event.payload["result"]).synthesis
+    reason = event.payload.get("reason")
+    if len(synthesis) > SUMMARY_EXCERPT_CHARS:
+        # A worker writes its synthesis; the summary carries an excerpt and
+        # the whole of it stays behind result.json.
+        synthesis = synthesis[:SUMMARY_EXCERPT_CHARS].rstrip() + " ... (full synthesis in result.json)"
+    tail = synthesis or (f"reason: {reason}" if reason else "")
+    summary = f"{delegation.id} ({delegation.spec.objective}) {delegation.state.value}"
+    if tail:
+        summary += f": {tail}"
+    return AttentionItem(
+        id=item_id, delegation_id=delegation.id, source_event=event.sequence,
+        summary=summary, category=category, importance=importance,
+        actionable=delegation.state in {DelegationState.FAILED, DelegationState.EXHAUSTED},
+        related_refs=refs, detail_refs=detail, event_kind=event.kind,
+    )
 
 
 def route(event: DelegationEvent, tree: DelegationTree, subscriptions: tuple[AttentionSubscription, ...],
@@ -247,24 +264,13 @@ def route(event: DelegationEvent, tree: DelegationTree, subscriptions: tuple[Att
     for subscription in subscriptions:
         if subscription.expires_on == "terminal" and tree.get(subscription.source).terminal:
             continue
-        for trigger in subscription.triggers:
-            if trigger not in classes:
-                continue
-            in_scope = subscription.source == source or (
-                trigger not in {"terminal", "progress"} and subscription.source in ancestors)
-            if in_scope:
-                matched.append(subscription)
-                break
+        if _matches_subscription(subscription, source, ancestors, classes):
+            matched.append(subscription)
     if matched:
         item = derive_item(event, tree, force=True)
         if item is None:
             return None
-        per_recipient: dict[str, DeliveryMode] = {}
-        for subscription in matched:
-            for name in (("human", "main_agent") if subscription.recipient == "both" else (subscription.recipient,)):
-                current = per_recipient.get(name)
-                if current is None or _MODE_RANK[subscription.mode] > _MODE_RANK[current]:
-                    per_recipient[name] = subscription.mode
+        per_recipient = _recipient_modes(matched)
         recipients = tuple(r for r in ("human", "main_agent") if r in per_recipient)
         delivery = tuple((r, per_recipient[r]) for r in recipients)
         return item.model_copy(update={"recipients": recipients, "delivery": delivery}), max(
@@ -275,13 +281,39 @@ def route(event: DelegationEvent, tree: DelegationTree, subscriptions: tuple[Att
     return item, DeliveryMode.NOTIFY
 
 
+def _matches_subscription(subscription: AttentionSubscription, source: str,
+                           ancestors: set[str], classes: frozenset[str]) -> bool:
+    """Terminal/progress subscriptions name one node; finding classes cover its subtree."""
+    for trigger in subscription.triggers:
+        if trigger not in classes:
+            continue
+        in_scope = subscription.source == source or (
+            trigger not in {"terminal", "progress"} and subscription.source in ancestors)
+        if in_scope:
+            return True
+    return False
+
+
+def _recipient_modes(matched: list[AttentionSubscription]) -> dict[str, DeliveryMode]:
+    """Apply the strongest explicitly subscribed mode independently to each recipient."""
+    per_recipient: dict[str, DeliveryMode] = {}
+    for subscription in matched:
+        for name in (("human", "main_agent") if subscription.recipient == "both" else (subscription.recipient,)):
+            current = per_recipient.get(name)
+            if current is None or _MODE_RANK[subscription.mode] > _MODE_RANK[current]:
+                per_recipient[name] = subscription.mode
+    return per_recipient
+
+
 # -- the inbox ---------------------------------------------------------------------
 
 class AttentionInbox:
+    """Derive durable pending attention from events, receipts and explicit handling."""
     def __init__(self, store: DelegationStore) -> None:
         self.store = store
 
     def derive(self, event: DelegationEvent, tree: DelegationTree, *, force: bool = False) -> AttentionItem | None:
+        """Derive the event's attention obligation without recording or delivering it."""
         return derive_item(event, tree, force=force)
 
     # -- durable state ------------------------------------------------------
@@ -302,16 +334,19 @@ class AttentionInbox:
         return items, receipts, handled
 
     def record(self, item: AttentionItem) -> None:
+        """Journal a derived item once; repeated routing retains its original identity."""
         items, _, _ = self._state()
         if item.id in items:
             return
         self.store.append(item.delegation_id, "attention.derived", {"item": item.model_dump(mode="json")})
 
     def items(self) -> tuple[AttentionItem, ...]:
+        """Expose the retained derived items, including handled and delivered history."""
         items, _, _ = self._state()
         return tuple(items.values())
 
     def pending(self, recipient: Recipient) -> tuple[AttentionItem, ...]:
+        """Keep undelivered items and sticky unhandled decisions visible to this recipient."""
         items, receipts, handled = self._state()
         pending = []
         for item in items.values():
@@ -345,11 +380,13 @@ class AttentionInbox:
         return tuple(current)
 
     def receipts(self, item_id: str) -> tuple[DeliveryReceipt, ...]:
+        """Read each recipient's durable delivery evidence for an item."""
         _, receipts, _ = self._state()
         return tuple(receipts.get(item_id, ()))
 
     def receipt(self, item_id: str, recipient: Recipient, mode: str, *, epoch: str | None = None,
                 offset: int | None = None, now: datetime | None = None) -> DeliveryReceipt:
+        """Journal one recipient's delivery position without marking the item handled."""
         items, _, _ = self._state()
         if item_id not in items:
             raise ValueError(f"unknown attention item: {item_id}")
@@ -361,6 +398,7 @@ class AttentionInbox:
         return receipt
 
     def handle(self, item_id: str, *, by: str) -> None:
+        """Record explicit resolution of an item; delivery alone never handles it."""
         items, _, handled = self._state()
         if item_id not in items:
             raise ValueError(f"unknown attention item: {item_id}")
