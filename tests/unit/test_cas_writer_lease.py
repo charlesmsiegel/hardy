@@ -204,3 +204,32 @@ def test_distinct_logs_have_independent_leases(tmp_path):
     finally:
         first.close()
         second.close()
+
+
+@pytest.mark.parametrize("operation", ["append", "write_spend"])
+def test_ownership_lost_at_the_write_poisons_the_session(tmp_path, monkeypatch, operation):
+    active = session(tmp_path / "cells.jsonl")
+    try:
+        active.reset()
+        active.charge(2)
+        before = active.log_path.read_bytes()
+        spend_path = active.log_path.with_name(active._journal.spend_name)
+        spend_before = spend_path.read_bytes()
+        real_write = getattr(active._journal, operation)
+
+        def lose_ownership(*args):
+            active._journal.close()
+            return real_write(*args)
+
+        monkeypatch.setattr(active._journal, operation, lose_ownership)
+        with pytest.raises(CasError, match="could not be written"):
+            if operation == "append":
+                active.reset()
+            else:
+                active.charge(1)
+        assert active.state == "poisoned"
+        assert active.log_path.read_bytes() == before
+        assert spend_path.read_bytes() == spend_before
+        assert len(active.records()) == 1
+    finally:
+        active.close()

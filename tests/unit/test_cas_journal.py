@@ -60,11 +60,102 @@ def test_the_spend_sidecar_outlives_the_last_append(tmp_path) -> None:
     assert CellJournal(tmp_path / "cells.jsonl").own() == 2.5
 
 
-def test_a_closed_journal_cannot_be_written_through_again(journal) -> None:
+@pytest.mark.parametrize("operation", ["append", "write_spend"])
+def test_a_closed_journal_cannot_write_after_a_successor_owns_it(journal, operation) -> None:
+    journal.append(_record(0, 0))
+    journal.write_spend(1.5)
     journal.close()
     assert journal.closed and not journal.owned
-    with pytest.raises(CasError):
-        journal.check_lease()
+    successor = CellJournal(journal.path)
+    assert successor.own() == 1.5
+    try:
+        successor.append(_record(1, 0))
+        before = journal.path.read_bytes()
+        spend_path = journal.path.with_name(journal.spend_name)
+        spend_before = spend_path.read_bytes()
+        with pytest.raises(CasError, match="not owned"):
+            if operation == "append":
+                journal.append(_record(2, 0))
+            else:
+                journal.write_spend(99)
+        assert journal.path.read_bytes() == before
+        assert spend_path.read_bytes() == spend_before
+        assert [record.seq for record in journal.records] == [0]
+        assert [record.seq for record in successor.records] == [0, 1]
+    finally:
+        successor.close()
+
+
+def test_a_closed_journal_cannot_reacquire_its_lease(journal) -> None:
+    journal.close()
+    with pytest.raises(CasError, match="closed"):
+        journal.own()
+    assert not journal.owned
+
+
+def test_owning_an_already_owned_journal_keeps_its_lease(journal) -> None:
+    journal.append(_record(0, 0).model_copy(update={"spent_ms": 1_000}))
+    journal.write_spend(2.5)
+    lease = journal._lease
+    assert journal.own() == 2.5
+    assert journal._lease is lease and lease.held
+    journal.append(_record(1, 0))
+    assert [record.seq for record in journal.records] == [0, 1]
+    with pytest.raises(CasError, match="cannot be owned"):
+        CellJournal(journal.path).own()
+
+
+@pytest.mark.parametrize("operation", ["append", "write_spend"])
+def test_a_journal_with_a_replaced_lease_cannot_write(journal, operation) -> None:
+    journal.append(_record(0, 0))
+    journal.write_spend(1.5)
+    lease_path = journal.path.with_name(journal.path.name + ".lock")
+    journal._lease.__exit__(None, None, None)
+    lease_path.rename(lease_path.with_suffix(".replaced"))
+    successor = CellJournal(journal.path)
+    successor.own()
+    try:
+        before = journal.path.read_bytes()
+        spend_path = journal.path.with_name(journal.spend_name)
+        spend_before = spend_path.read_bytes()
+        with pytest.raises(CasError, match="lease was replaced"):
+            if operation == "append":
+                journal.append(_record(1, 0))
+            else:
+                journal.write_spend(99)
+        assert journal.path.read_bytes() == before
+        assert spend_path.read_bytes() == spend_before
+        assert [record.seq for record in journal.records] == [0]
+        assert [record.seq for record in successor.records] == [0]
+    finally:
+        successor.close()
+
+
+@pytest.mark.parametrize("operation", ["append", "write_spend"])
+def test_a_journal_with_a_deleted_lease_cannot_write(journal, operation) -> None:
+    journal.append(_record(0, 0))
+    journal.write_spend(1.5)
+    lease_path = journal.path.with_name(journal.path.name + ".lock")
+    journal._lease.__exit__(None, None, None)
+    lease_path.unlink()
+    before = journal.path.read_bytes()
+    spend_path = journal.path.with_name(journal.spend_name)
+    spend_before = spend_path.read_bytes()
+    with pytest.raises(FileNotFoundError):
+        if operation == "append":
+            journal.append(_record(1, 0))
+        else:
+            journal.write_spend(99)
+    assert journal.path.read_bytes() == before
+    assert spend_path.read_bytes() == spend_before
+    assert [record.seq for record in journal.records] == [0]
+
+
+def test_a_closed_scratch_journal_can_still_be_removed(journal) -> None:
+    journal.append(_record(0, 0))
+    journal.close()
+    journal.remove()
+    assert not journal.path.exists()
 
 
 def test_a_second_owner_is_refused_while_the_first_holds_the_lease(journal, tmp_path) -> None:

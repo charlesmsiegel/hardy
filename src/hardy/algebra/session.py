@@ -281,7 +281,7 @@ class CasSession:
         self._require_owner()
         try:
             self._journal.append(record)
-        except OSError as error:
+        except (OSError, CasError) as error:
             raise self._poisoned(
                 f"the CAS cell log could not be written ({self.log_path}): {error}. "
                 "The session is poisoned because its live state is no longer recorded. "
@@ -450,7 +450,7 @@ class CasSession:
             self.total_spent_seconds += seconds
             try:
                 self._journal.write_spend(self.total_spent_seconds)
-            except (OSError, LayoutError) as error:
+            except (OSError, LayoutError, CasError) as error:
                 raise self._poisoned(
                     f"the CAS spend could not be written ({self._journal.spend_name}): {error}"
                 ) from error

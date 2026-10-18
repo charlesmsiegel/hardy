@@ -50,10 +50,17 @@ class CellJournal:
 
         Locking only an append cannot serialize two already-loaded histories:
         their sequence numbers, spend, and live namespaces would still differ.
-        The OS lease therefore lasts until `release`, including between cells.
+        The OS lease therefore lasts until `close`, including between cells.
 
+        An already owned journal keeps its lease; a closed one never reopens.
         Returns the session's total spend as the log and its sidecar record it.
         """
+        if self.closed:
+            raise CasError("the CAS cell log is closed; open a new journal before writing")
+        if self.owned:
+            self.check_lease()
+            recorded = self.records[-1].spent_ms / 1_000 if self.records else 0.0
+            return max(recorded, self._load_spend())
         # A deferred session has never loaded history or owned a kernel. Its
         # formerly unusable parent may now be a directory; prove it afresh.
         self._guard = WriteGuard(self.path.parent)
@@ -112,7 +119,8 @@ class CellJournal:
             raise CasError(f"the CAS spend could not be read ({self.spend_name}): {error}") from error
 
     def write_spend(self, total_seconds: float) -> None:
-        """Persist the running total, or raise `OSError`/`LayoutError`."""
+        """Persist the running total under the current lease, or refuse the write."""
+        self.check_lease()
         self._guard.mkdir()
         self._guard.write_bytes(
             self.spend_name,
@@ -243,13 +251,14 @@ class CellJournal:
             self._terminate()
 
     def append(self, record: CellRecord) -> None:
-        """Publish a record, durably first and only then in memory, or raise `OSError`.
+        """Publish a record under the current lease, durably before adding it in memory.
 
         The order matters in a long-lived server. A record added to `records`
         before the write succeeded numbers and anchors everything after it, so
         a workspace that filled up or went read-only would keep answering from
         a history that a restart cannot reconstruct.
         """
+        self.check_lease()
         # Through the guard, which re-proves the directory and re-pins it if it
         # had to be recreated: a session whose workspace was deleted underneath
         # it must still be able to record the cell that just ran, and the
