@@ -55,22 +55,22 @@ from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.representation import RepresentationModel
 
 
+# An inventoried statement pinned to an exact paper version.
 class LiteratureSelection(FrozenModel):
-    """An inventoried statement pinned to an exact paper version."""
     paper_id: Text
     statement_ref: Text
 
 
+# A source premise and its claimed availability at the citation use site.
 class HypothesisComparison(FrozenModel):
-    """A source premise and its claimed availability at the citation use site."""
     hypothesis: Text
     availability: Literal["established", "unresolved", "unavailable"]
     reason: Text
     evidence: tuple[EvidenceRef, ...] = ()
 
 
+# Semantic comparison of the required claim with a source and its premises.
 class LiteratureComparison(FrozenModel):
-    """Semantic comparison of the required claim with a source and its premises."""
     required_statement: Text
     required_hypotheses: tuple[Text, ...]
     hypotheses: tuple[HypothesisComparison, ...]

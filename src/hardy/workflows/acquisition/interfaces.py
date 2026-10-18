@@ -37,14 +37,14 @@ from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.representation import RepresentationModel
 
 
+# A typed prerequisite for constructing the selected interface.
 class InterfaceRequirement(FrozenModel):
-    """A typed prerequisite for constructing the selected interface."""
     kind: ObligationKind
     reason: Text
 
 
+# An operation or property with explicit field dependencies and prerequisites.
 class InterfaceField(FrozenModel):
-    """An operation or property with explicit field dependencies and prerequisites."""
     name: Text
     lean_type: Text
     depends_on: tuple[Text, ...] = ()
@@ -60,8 +60,9 @@ class InterfaceField(FrozenModel):
         return self
 
 
+# Implementation of the selected exact representation, not a new choice.
 class InterfacePlan(FrozenModel):
-    """Implementation of the selected exact representation, not a new choice."""
+    """Implementation of B4's selected exact representation, not a new choice."""
     representation: VersionRef
     name: Text
     path: Text

@@ -53,8 +53,8 @@ def _fragment(value: str) -> None:
         raise ValueError("definition requires a single Lean fragment without commands or assumptions")
 
 
+# A concrete single-declaration body, still requiring the formal owner's check.
 class LocalDefinition(FrozenModel):
-    """A concrete single-declaration body, still requiring the formal owner's check."""
     name: Text
     lean_type: Text
     body: Text
@@ -73,14 +73,14 @@ class LocalDefinition(FrozenModel):
         return f"import Mathlib\n\ndef {self.name} : {self.lean_type} := {self.body}\n"
 
 
+# A proposed law for an opaque carrier; naming it grants no trust.
 class CharacterizingAssumption(FrozenModel):
-    """A proposed law for an opaque carrier; naming it grants no trust."""
     name: Text
     statement: Text
 
 
+# A carrier and its proposed laws, kept explicit until admission or proof.
 class OpaqueDefinition(FrozenModel):
-    """A carrier and its proposed laws, kept explicit until admission or proof."""
     name: Text
     lean_type: Text
     reason: Text
@@ -97,15 +97,16 @@ class OpaqueDefinition(FrozenModel):
         return self
 
 
+# An exact search hit selected for formal materialization.
 class DefinitionMapping(FrozenModel):
-    """An exact search hit selected for formal materialization."""
     source: Literal["mathlib", "local"]
     hit: SearchMatch
     reason: Text
 
 
+# A formal owner's artifacts and references, reauthenticated by ledger policy.
 class DefinitionMaterialization(FrozenModel):
-    """A formal owner's artifacts and references, reauthenticated by ledger policy."""
+    """A formal owner's artifacts and claimed references, reauthenticated by B2."""
     artifacts: tuple[ArtifactRef, ...] = ()
     evidence: tuple[EvidenceRef, ...] = ()
 

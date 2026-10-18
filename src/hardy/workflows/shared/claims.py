@@ -30,8 +30,8 @@ from .ledger import SharedClaims
 RETRIES = 5
 
 
+# The semantic relation proposed between a source reading and shared claim.
 class LinkRelation(str, Enum):
-    """The semantic relation proposed between a source reading and shared claim."""
     EXPRESSES = "expresses"
     SPECIALIZES = "specializes"
     GENERALIZES = "generalizes"
@@ -39,8 +39,8 @@ class LinkRelation(str, Enum):
     OTHER = "other"
 
 
+# The review/admission state of an immutable source interpretation.
 class LinkStatus(str, Enum):
-    """The review/admission state of an immutable source interpretation."""
     PROPOSED = "proposed"
     AMBIGUOUS = "ambiguous"
     ADMITTED = "admitted"
@@ -48,15 +48,15 @@ class LinkStatus(str, Enum):
     REVIEW_NEEDED = "review_needed"
 
 
+# An explicit user decision; a model cannot supply human authority.
 class HumanApproval(FrozenModel):
-    """An explicit user decision; a model cannot supply human authority."""
     actor: Text
     reason: Text
     at: str
 
 
+# An exact source reading, its claim candidates and the authority for admission.
 class SourceClaimLink(FrozenModel):
-    """An exact source reading, its claim candidates and the authority for admission."""
     id: StableId
     artifact_sha256: Digest
     tree: StableId
@@ -80,8 +80,8 @@ class SourceClaimLink(FrozenModel):
     at: str
 
 
+# Unadmitted claim candidates and interpretation mappings from one interpreter.
 class InterpretationProposal(FrozenModel):
-    """Unadmitted claim candidates and interpretation mappings from one interpreter."""
     claim_candidates: tuple[VersionRef, ...] = ()
     new_claim: ProjectItem | None = None
     relation: LinkRelation = LinkRelation.EXPRESSES

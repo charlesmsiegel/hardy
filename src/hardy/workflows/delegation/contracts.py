@@ -41,8 +41,8 @@ TERMINAL_STATES = frozenset({
 })
 
 
+# How a delegation exchanges work with its peers; no mathematical authority.
 class CoordinationPolicy(str, Enum):
-    """How a delegation exchanges work with its peers; no mathematical authority."""
     INDEPENDENT = "independent"
     SHARED = "shared"
     CELL = "cell"
