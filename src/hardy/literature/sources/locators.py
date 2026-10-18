@@ -28,10 +28,12 @@ class SpanError(ValueError):
 
 
 def text_digest(text: str) -> str:
+    """Digest the exact UTF-8 reading a source span must resolve again."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def resolve_range(span: RepresentationSpan, texts: Mapping[str, str]) -> str:
+    """Read character offsets from their named representation, refusing missing text or overruns."""
     text = texts.get(span.representation)
     if text is None:
         raise SpanError(f"representation {span.representation} is not available; offsets cannot be read in any other")
@@ -53,6 +55,7 @@ def span_for(
     representation: DerivedRepresentation, text: str, start: int, end: int, *, id: str,
     anchors: tuple[SourceAnchor, ...] = (), node: str | None = None, mapping_provenance: str,
 ) -> SourceSpan:
+    """Bind one representation range to its exact text digest and supplied provenance."""
     part = RepresentationSpan(representation=representation.id, start=start, end=end)
     content = resolve_range(part, {representation.id: text})
     return SourceSpan(
@@ -65,6 +68,7 @@ def compound_span(
     representation: DerivedRepresentation, text: str, parts: tuple[tuple[int, int], ...], *, id: str,
     anchors: tuple[SourceAnchor, ...] = (), node: str | None = None, mapping_provenance: str,
 ) -> SourceSpan:
+    """Bind the supplied range order to the digest of its concatenated text."""
     ranges = tuple(RepresentationSpan(representation=representation.id, start=s, end=e) for s, e in parts)
     content = "".join(resolve_range(r, {representation.id: text}) for r in ranges)
     return SourceSpan(

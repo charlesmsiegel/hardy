@@ -63,6 +63,8 @@ ExtractionStatus = Literal["ok", "partial", "failed", "not_run", "unsupported"]
 
 @dataclass(frozen=True)
 class ExtractionReport:
+    """One pass's admitted readings and explicit outcome, including failure or no adapter."""
+
     artifact_sha256: str
     status: ExtractionStatus
     representations: tuple[DerivedRepresentation, ...] = ()
@@ -97,6 +99,7 @@ class ExtractionLog:
         return target
 
     def passes(self, sha256: str) -> tuple[dict[str, Any], ...]:
+        """Readable JSON pass records in filename order; unreadable files are ignored."""
         directory = self.root / sha256
         if not directory.is_dir() or directory.is_symlink():
             return ()
@@ -109,18 +112,23 @@ class ExtractionLog:
         return tuple(found)
 
     def latest(self, sha256: str) -> dict[str, Any] | None:
+        """The last readable pass record, or none when no readable record exists."""
         passes = self.passes(sha256)
         return passes[-1] if passes else None
 
 
 @dataclass(frozen=True)
 class ImportReport:
+    """Byte admission plus optional extraction and candidate bibliographic groupings."""
+
     outcome: ImportOutcome
     extraction: ExtractionReport | None
     proposals: tuple[GroupingProposal, ...] = ()
 
 
 class ManagedLibrary:
+    """Compose identity and reading stores without promoting extraction into claim authority."""
+
     def __init__(self, root: Path, *, adapters: AdapterRegistry | None = None, clock: Callable[[], float] = time.time) -> None:
         self.root = Path(root)
         self.artifacts = ArtifactStore(self.root / ARTIFACTS, clock=clock)
@@ -133,9 +141,11 @@ class ManagedLibrary:
         self._clock = clock
 
     def availability(self, sha256: str) -> ArtifactAvailability:
+        """The exact managed artifact's availability, independent of extraction success."""
         return self.artifacts.availability(sha256)
 
     def import_source(self, request: ImportRequest, *, extract: bool = True, budget: ExtractionBudget = DEFAULT_BUDGET) -> ImportReport:
+        """Admit bytes, optionally extract readings, and propose rather than decide identity."""
         outcome = self.artifacts.import_bytes(request)
         extraction = None
         proposals: tuple[GroupingProposal, ...] = ()
@@ -145,6 +155,7 @@ class ManagedLibrary:
         return ImportReport(outcome=outcome, extraction=extraction, proposals=proposals)
 
     def extract(self, sha256: str, *, budget: ExtractionBudget = DEFAULT_BUDGET) -> ExtractionReport:
+        """Extract a managed copy and record the pass's explicit outcome beside its readings."""
         report = self._extract(sha256, budget=budget)
         self.extractions.record(report)
         return report

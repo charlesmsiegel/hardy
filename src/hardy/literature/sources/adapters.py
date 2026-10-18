@@ -33,6 +33,8 @@ class ExtractionRefused(ValueError):
 
 @dataclass(frozen=True)
 class ExtractionBudget:
+    """Caller ceilings on pages, retained text and native fragment counts."""
+
     max_pages: int = 5_000
     max_text_bytes: int = 64 * 1024 * 1024
     max_fragments: int = 2_000_000
@@ -40,6 +42,8 @@ class ExtractionBudget:
 
 @dataclass(frozen=True)
 class ExtractionResult:
+    """One adapter pass's readings and evidence, including disclosed extraction gaps."""
+
     representations: tuple[tuple[DerivedRepresentation, Mapping[str, bytes]], ...]
     mappings: tuple[RepresentationMapping, ...] = ()
     observations: tuple[StructuralObservation, ...] = ()
@@ -48,6 +52,8 @@ class ExtractionResult:
 
 
 class SourceAdapter(Protocol):
+    """A format reader supplies attributable evidence without deciding identity or claims."""
+
     name: str
     version: str
 
@@ -57,16 +63,20 @@ class SourceAdapter(Protocol):
 
 
 class AdapterRegistry:
+    """Choose the first registered reader that declares support for an artifact."""
+
     def __init__(self, adapters: tuple[SourceAdapter, ...]) -> None:
         self._adapters = adapters
 
     def for_artifact(self, artifact: SourceArtifact) -> SourceAdapter | None:
+        """Find a declared format match without reading the artifact's bytes."""
         for adapter in self._adapters:
             if adapter.handles(artifact):
                 return adapter
         return None
 
     def formats(self) -> tuple[SourceFormat, ...]:
+        """Distinct declared format support, in registry and format-enumeration order."""
         found: list[SourceFormat] = []
         for adapter in self._adapters:
             for format_ in SourceFormat:
@@ -80,6 +90,7 @@ class AdapterRegistry:
 
 
 def default_adapters() -> AdapterRegistry:
+    """Construct built-in readers lazily so their shared protocol can initialize first."""
     from .epub import EpubAdapter
     from .pdf import PdfAdapter
     from .tex import TexAdapter

@@ -42,6 +42,8 @@ def payload_digest(payloads: Mapping[str, bytes]) -> str:
 
 
 class RepresentationStore:
+    """Keep immutable readings and mappings, with bounded reuse of verified payload bytes."""
+
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
         self._verified: OrderedDict[tuple[str, str], tuple[tuple, dict[str, bytes]]] = OrderedDict()
@@ -68,6 +70,7 @@ class RepresentationStore:
         self, record: DerivedRepresentation, payloads: Mapping[str, bytes],
         mappings: tuple[RepresentationMapping, ...] = (),
     ) -> DerivedRepresentation:
+        """Admit matching payloads once, or restore withheld bytes under the same output id."""
         if set(record.payload_files) != set(payloads):
             raise RepresentationError("the record's payload_files must name exactly the payloads supplied")
         if payload_digest(payloads) != record.output_sha256:
@@ -137,6 +140,7 @@ class RepresentationStore:
             guard.write_json(name, mapping.model_dump(mode="json"))
 
     def get(self, artifact_sha256: str, id: str) -> DerivedRepresentation:
+        """Validate a representation's identity record independently of payload availability."""
         try:
             record = DerivedRepresentation.model_validate_json(read_text(self.root, f"{artifact_sha256}/{id}/{RECORD}"))
         except FileNotFoundError:
@@ -148,6 +152,7 @@ class RepresentationStore:
         return record
 
     def list(self, artifact_sha256: str, kind: RepresentationKind | None = None) -> tuple[DerivedRepresentation, ...]:
+        """Recorded readings in derivation-time and id order, including withheld payloads."""
         directory = self.root / artifact_sha256
         if not directory.is_dir() or directory.is_symlink():
             return ()
@@ -161,6 +166,7 @@ class RepresentationStore:
         return tuple(sorted(records, key=lambda r: (r.derived_at, r.id)))
 
     def payload(self, artifact_sha256: str, id: str, name: str) -> bytes:
+        """Serve a named payload after checking the complete recorded output and file identities."""
         record = self.get(artifact_sha256, id)
         if name not in record.payload_files:
             raise RepresentationError(f"representation {id} has no payload {name!r}")
@@ -194,6 +200,7 @@ class RepresentationStore:
         return held[name]
 
     def text(self, artifact_sha256: str, id: str) -> str:
+        """Decode verified text bytes, retaining decoded text only with the verified byte cache."""
         data = self.payload(artifact_sha256, id, TEXT_PAYLOAD)
         key = (artifact_sha256, id)
         text = self._decoded.get(key)
@@ -220,6 +227,7 @@ class RepresentationStore:
     def mappings(
         self, artifact_sha256: str, left: str | None = None, right: str | None = None,
     ) -> tuple[RepresentationMapping, ...]:
+        """Stored mappings under this artifact, optionally filtered by directed endpoints."""
         found: list[RepresentationMapping] = []
         for record in self.list(artifact_sha256):
             directory = self._dir(artifact_sha256, record.id) / MAPPINGS
@@ -234,6 +242,7 @@ class RepresentationStore:
         return tuple(found)
 
     def page_manifest(self, artifact_sha256: str) -> tuple[DerivedRepresentation, list[dict]] | None:
+        """The latest page-manifest reading and payload, or none when no manifest is recorded."""
         manifests = self.list(artifact_sha256, RepresentationKind.PAGE_MANIFEST)
         if not manifests:
             return None
@@ -244,6 +253,7 @@ class RepresentationStore:
         return record, pages
 
     def page_labels(self, artifact_sha256: str) -> tuple[tuple[int, str], ...]:
+        """Printed labels from the latest manifest, paired with their zero-based page indices."""
         manifest = self.page_manifest(artifact_sha256)
         if manifest is None:
             return ()
@@ -251,5 +261,6 @@ class RepresentationStore:
         return tuple((int(p["index"]), str(p["label"])) for p in pages if p.get("label") is not None)
 
     def page_count(self, artifact_sha256: str) -> int | None:
+        """The latest manifest's page count; no manifest leaves the count unknown."""
         manifest = self.page_manifest(artifact_sha256)
         return None if manifest is None else len(manifest[1])

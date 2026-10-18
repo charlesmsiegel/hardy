@@ -131,6 +131,7 @@ class ObservationStore:
         return self.get(artifact_sha256, set_id)
 
     def get(self, artifact_sha256: str, set_id: str) -> tuple[StructuralObservation, ...]:
+        """An identified observation set, empty when absent or its guarded location is refused."""
         try:
             raw = read_text(self.root, f"{artifact_sha256}/observations/{set_id}.json")
         except (FileNotFoundError, LayoutError):
@@ -138,12 +139,14 @@ class ObservationStore:
         return tuple(StructuralObservation.model_validate(o) for o in json.loads(raw))
 
     def sets(self, artifact_sha256: str) -> tuple[str, ...]:
+        """Non-link observation-set filenames in sorted order."""
         directory = self._dir(artifact_sha256)
         if not directory.is_dir() or directory.is_symlink():
             return ()
         return tuple(sorted(p.stem for p in directory.iterdir() if p.suffix == ".json" and not p.is_symlink()))
 
     def all(self, artifact_sha256: str) -> tuple[StructuralObservation, ...]:
+        """Concatenate recorded sets in name order without choosing a producer's authority."""
         found: list[StructuralObservation] = []
         for set_id in self.sets(artifact_sha256):
             found.extend(self.get(artifact_sha256, set_id))
