@@ -167,20 +167,17 @@ def test_every_rendered_lean_file_is_byte_identical_to_the_pinned_one(tmp_path) 
     assert not changed, f'{len(changed)} rendered files changed, first: {changed[0]}'
 
 
-def test_a_request_naming_no_imports_is_laid_out_like_a_claim_naming_none(tmp_path) -> None:
-    """The one input whose bytes the shared layout changed, and why that is safe.
+def test_requests_keep_the_empty_import_header_used_by_existing_artifacts(tmp_path) -> None:
+    """The public Request constructor accepts empty imports even though its JSON reader does not."""
+    seen: list[str] = []
+    tools = LeanTools(
+        Request('theorem t : True', 'x', ()), ('lean',), project=tmp_path,
+        runner=_capturing(seen),
+    )
 
-    The request renderer joined imports with newlines and added two more, so
-    with no imports it opened on two blank lines where the claim renderer
-    opened on one. No request reaches it: `Request.from_dict` refuses an empty
-    import list, every request built in code names Mathlib, and the recorded
-    batch reader will not rebuild a request without imports.
-    """
-    tools = LeanTools(Request('theorem t : True', 'x', ()), ('lean',), project=tmp_path)
-    claim = _claim((), 't', '', 'True')
-
-    assert tools.source('by trivial') == '\ntheorem t : True := by trivial\n'
-    assert render_theorem(claim, 'by trivial').startswith('\ntheorem t : True :=')
+    assert tools.source('by trivial') == '\n\ntheorem t : True := by trivial\n'
+    tools.search_declaration('Nat')
+    assert seen == ['\n\n#check Nat\n#print Nat\n']
 
 
 def test_the_probe_and_inspection_lines_are_counted_from_the_scratch_header() -> None:
