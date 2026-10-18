@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -168,6 +169,25 @@ def test_explicit_child_environment_values_are_available(tmp_path) -> None:
 
     assert result.returncode == 0
     assert result.stdout == 'HARDY_VISIBLE=yes\n'
+
+
+@pytest.mark.parametrize(('environment', 'expected'), [
+    (None, {'HARDY_PARENT': 'parent', 'HARDY_CHILD': None}),
+    ({}, {'HARDY_PARENT': None, 'HARDY_CHILD': None}),
+    ({'HARDY_CHILD': 'child'}, {'HARDY_PARENT': None, 'HARDY_CHILD': 'child'}),
+])
+def test_guarded_environment_replaces_rather_than_extends_the_parent(tmp_path, monkeypatch, environment, expected):
+    from hardy.foundation.process import run_guarded
+
+    monkeypatch.setenv('HARDY_PARENT', 'parent')
+    monkeypatch.delenv('HARDY_CHILD', raising=False)
+    result = run_guarded(
+        (sys.executable, '-c', "import json, os; print(json.dumps({k: os.environ.get(k) for k in ('HARDY_PARENT', 'HARDY_CHILD')}))"),
+        cwd=tmp_path, timeout=5, env=environment,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == expected
 
 
 def _await_file(path, deadline: float = 10.0) -> None:
@@ -484,6 +504,37 @@ def test_run_guarded_stops_a_child_that_ignores_the_interrupt(tmp_path) -> None:
     assert outcome.returncode is None
     # Grace, then the group's SIGTERM -- and nowhere near the 60s timeout.
     assert 1.5 <= elapsed < 30
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='SIGTERM cleanup handlers require POSIX signals')
+def test_guarded_sigterm_cleanup_gets_time_to_finish(tmp_path) -> None:
+    process = importlib.import_module('hardy.foundation.process')
+    ready = tmp_path / 'ready'
+    source = (
+        'import signal, sys, time\n'
+        'from pathlib import Path\n'
+        'def finish(signum, frame):\n'
+        '    time.sleep(0.5)\n'
+        '    print("cleanup-complete", flush=True)\n'
+        '    sys.exit(0)\n'
+        'signal.signal(signal.SIGINT, signal.SIG_IGN)\n'
+        'signal.signal(signal.SIGTERM, finish)\n'
+        f'Path({str(ready)!r}).write_text("ready", encoding="utf-8")\n'
+        'time.sleep(30)\n'
+    )
+
+    def interrupt() -> None:
+        _await_file(ready)
+        process.interrupt_children()
+
+    presser = threading.Thread(target=interrupt, daemon=True)
+    presser.start()
+    result = process.run_guarded((sys.executable, '-c', source), cwd=tmp_path, timeout=10)
+    presser.join(5)
+
+    assert result.interrupted
+    assert result.returncode is None
+    assert result.stdout == 'cleanup-complete\n'
 
 
 WRAPPER = Path(__file__).parents[1] / 'fixtures' / 'process' / 'wrapper.py'

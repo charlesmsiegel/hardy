@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import errno
 import os
+import stat
 import sys
 import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
 
 
-def atomic_write_bytes(target: Path, content: bytes) -> None:
+def atomic_write_bytes(
+    target: Path, content: bytes, *, permissions: Literal["private", "preserve"] = "private",
+) -> None:
     """Replace `target` with `content`, fsynced and whole or not at all, creating its directory.
 
     Nothing here checks the path: a link at `target` is replaced and one
@@ -23,12 +26,27 @@ def atomic_write_bytes(target: Path, content: bytes) -> None:
     `files.WriteGuard`, which proves the path first; this is for the files
     Hardy keeps outside one -- run storage, the paper library, evaluation
     boards and summaries, the corpus viewer's shards.
+
+    Replacements are private by default. A release that replaces published
+    files can preserve existing regular files' POSIX modes explicitly; new
+    files remain private, and Windows permissions are left to the platform.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
-    write_atomically(target, lambda handle: handle.write(content))
+    mode = None
+    if permissions == "preserve" and os.name != "nt":
+        try:
+            previous = target.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISREG(previous.st_mode):
+                mode = stat.S_IMODE(previous.st_mode)
+    write_atomically(target, lambda handle: handle.write(content), mode=mode)
 
 
-def write_atomically(target: Path, fill: Callable[[IO[bytes]], object], *, sync: bool = True) -> None:
+def write_atomically(
+    target: Path, fill: Callable[[IO[bytes]], object], *, sync: bool = True, mode: int | None = None,
+) -> None:
     """Replace `target` with what `fill` writes, whole or not at all.
 
     `fill` writes into a `NamedTemporaryFile` beside `target`, which opens
@@ -37,6 +55,8 @@ def write_atomically(target: Path, fill: Callable[[IO[bytes]], object], *, sync:
     reader sees the old file or the new one, never part of either, and a
     failure leaves no temporary behind. `sync` fsyncs the bytes before the
     rename, for a file that has to survive a crash and not only a reader.
+    `mode`, when given, sets POSIX permissions before the replacement lands;
+    otherwise the temporary's private permissions stay in force.
     The one copy of this sequence, so a fix to it cannot go stale in a second.
     """
     temporary: str | None = None
@@ -44,6 +64,8 @@ def write_atomically(target: Path, fill: Callable[[IO[bytes]], object], *, sync:
         with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as handle:
             temporary = handle.name
             fill(handle)
+            if mode is not None:
+                os.fchmod(handle.fileno(), mode)
             if sync:
                 handle.flush()
                 os.fsync(handle.fileno())

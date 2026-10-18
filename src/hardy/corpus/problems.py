@@ -347,9 +347,9 @@ class ProblemSet(FrozenModel):
             _check_twin_of(entry, by_id)
         return self
 
-    def by_id(self, entry_id: str) -> Entry:
+    def by_id(self, id: str) -> Entry:
         """O(1): a linear scan here is quadratic when a caller loops over it."""
-        return self.index[entry_id]
+        return self.index[id]
 
     @cached_property
     def index(self) -> dict[str, Entry]:

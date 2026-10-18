@@ -89,6 +89,14 @@ def test_ids_and_names_are_unique():
         ProblemSet(entries=(Entry(**_entry()), Entry(**_entry(id="other"))))
 
 
+def test_lookup_keeps_the_id_keyword():
+    problems = ProblemSet(entries=(Entry(**_entry()),))
+
+    assert problems.by_id(id="odd-squares").name == "OddSquares"
+    with pytest.raises(KeyError, match="missing"):
+        problems.by_id(id="missing")
+
+
 def test_the_committed_corpus_loads_and_has_fifteen_true_entries_and_five_twins():
     from hardy.corpus.catalog import load_corpus
 

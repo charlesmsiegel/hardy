@@ -447,14 +447,14 @@ def release(root: Path, version: str, notes: list[str], *, today: str) -> list[s
     # Each file is replaced whole, so a crash mid-release leaves every shard
     # either on the old version or the new one, never half written.
     for shard, text in stamped:
-        atomic_write_bytes(shard, text.encode("utf-8"))
+        atomic_write_bytes(shard, text.encode("utf-8"), permissions="preserve")
 
     changelog = root / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8")
     entry = "\n".join(f"- {note}" for note in notes) or "- (no note given)"
     section = f"## {version} - {today} - manifest {manifest_digest(root)} - scheme {MANIFEST_DIGEST_SCHEME}\n\n{entry}\n\n"
     at = text.index(f"## {current}")
-    atomic_write_bytes(changelog, (text[:at] + section + text[at:]).encode("utf-8"))
+    atomic_write_bytes(changelog, (text[:at] + section + text[at:]).encode("utf-8"), permissions="preserve")
     return check_issues(root)
 
 

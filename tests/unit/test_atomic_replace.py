@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import threading
 import time
 from pathlib import Path
@@ -18,6 +19,39 @@ import pytest
 from hardy.foundation import locking
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.locking import FileInUse, replace_with_retry
+
+
+@pytest.mark.parametrize('exists', [False, True])
+def test_permission_preserving_replacement_writes_whole_bytes(tmp_path, exists):
+    target = tmp_path / 'artifact'
+    if exists:
+        target.write_bytes(b'old')
+
+    locking.atomic_write_bytes(target, b'new', permissions='preserve')
+
+    assert target.read_bytes() == b'new'
+    assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='Windows does not expose POSIX file permissions')
+@pytest.mark.parametrize(('permissions', 'exists', 'expected_mode'), [
+    ('private', False, 0o600),
+    ('private', True, 0o600),
+    ('preserve', False, 0o600),
+    ('preserve', True, 0o640),
+])
+def test_atomic_replacement_preserves_permissions_only_when_requested(tmp_path, permissions, exists, expected_mode):
+    target = tmp_path / 'artifact'
+    if exists:
+        target.write_bytes(b'old')
+        target.chmod(0o640)
+
+    if permissions == 'private':
+        locking.atomic_write_bytes(target, b'new')
+    else:
+        locking.atomic_write_bytes(target, b'new', permissions=permissions)
+
+    assert stat.S_IMODE(target.stat().st_mode) == expected_mode
 
 
 @pytest.fixture(autouse=True)
