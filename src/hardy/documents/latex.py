@@ -263,8 +263,12 @@ def _commit_with_labels(
     previous = work / "hardy-previous-writeup.aux"
     had_aux = False
     if aux_guard is not None:
+        old = aux_guard.reserve("writeup.aux")
+        had_aux = old.exists()
+        # Preflight access errors propagate; only backup and replacement
+        # failures below can be reported as a held aux file.
         try:
-            had_aux = _replace_labels(work, aux_guard, previous)
+            _replace_labels(work, aux_guard, previous, old if had_aux else None)
         except PermissionError as error:
             if isinstance(error, FileInUse) or getattr(error, "winerror", None) in _HELD_OPEN_WINERRORS:
                 return aux_guard.path("writeup.aux")
@@ -279,12 +283,9 @@ def _commit_with_labels(
     return None
 
 
-def _replace_labels(work: Path, aux_guard: WriteGuard, previous: Path) -> bool:
-    """Publish this compile's `writeup.aux`, keeping the old one at `previous`.
-    Whether there was an old one."""
-    old = aux_guard.reserve("writeup.aux")
-    had_aux = old.exists()
-    if had_aux:
+def _replace_labels(work: Path, aux_guard: WriteGuard, previous: Path, old: Path | None) -> None:
+    """Publish this compile's labels, saving the prior file at `previous` for rollback."""
+    if old is not None:
         shadow_guard = WriteGuard(work)
         shadow_guard.write_from(previous.name, old, sync=False)
     aux = work / "writeup.aux"
@@ -293,7 +294,6 @@ def _replace_labels(work: Path, aux_guard: WriteGuard, previous: Path) -> bool:
     else:
         # A nofiles compile creates no labels: old aux must go.
         aux_guard.unlink("writeup.aux", missing_ok=True)
-    return had_aux
 
 
 def _restore_labels(aux_guard: WriteGuard, previous: Path | None) -> None:

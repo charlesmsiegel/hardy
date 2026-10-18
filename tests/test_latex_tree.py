@@ -8,6 +8,7 @@ import pytest
 
 from hardy.documents.latex import (
     LatexTools,
+    _publish,
     reached_fragments,
     uncertain_conditionals,
     unreached_fragments,
@@ -249,6 +250,37 @@ def test_aux_lock_that_also_denies_backup_reads_refuses_before_commit(tmp_path, 
     assert not result.ok and "writeup.aux" in result.output
     assert not committed
     assert (aux / "writeup.aux").read_bytes() == b"old labels"
+
+
+@pytest.mark.parametrize("probe", ["is_symlink", "exists"])
+def test_aux_preflight_access_errors_propagate(tmp_path, monkeypatch, probe):
+    """Reserving the aux path and checking its existence are preflight reads;
+    access errors there must propagate before any publication changes."""
+    work = tmp_path / "scratch"
+    work.mkdir()
+    aux = tmp_path / "build"
+    aux.mkdir()
+    labels = aux / "writeup.aux"
+    labels.write_bytes(b"old labels")
+    pdf = tmp_path / "writeup.pdf"
+    pdf.write_bytes(b"old pdf")
+    error = PermissionError("aux preflight access denied")
+    error.winerror = 5
+    original = getattr(Path, probe)
+
+    def denied(path):
+        if path == labels:
+            raise error
+        return original(path)
+
+    monkeypatch.setattr(Path, probe, denied)
+    committed = []
+    with pytest.raises(PermissionError, match="aux preflight access denied") as raised:
+        _publish(work, tmp_path, aux, commit=lambda: committed.append(True))
+    assert raised.value is error
+    assert not committed
+    assert labels.read_bytes() == b"old labels"
+    assert pdf.read_bytes() == b"old pdf"
 
 
 @pytest.mark.parametrize("had_aux", [False, True])
