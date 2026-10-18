@@ -127,9 +127,12 @@ def test_cas_append_repins_recreated_directory(tmp_path, cas_session, monkeypatc
         active.close()
         directory.rename(tmp_path / 'old-cas')
         directory.mkdir()
-        # Exercise the append's re-proof independently of the separate writer
-        # lease, which correctly refuses replacement of its rendezvous inode.
+        # Exercise the append's guard re-proof independently of its writer
+        # lease. Both the session and journal check that lease; bypass both
+        # only here, because close/replacement correctly invalidated ownership.
+        # The journal and writer-lease tests separately require those refusals.
         monkeypatch.setattr(active, '_require_owner', lambda: None)
+        monkeypatch.setattr(active._journal, 'check_lease', lambda: None)
         active._append(record)
         assert (directory / 'cells.jsonl').is_file()
         assert '"source":"a"' in (directory / 'cells.jsonl').read_text(encoding='utf-8')
