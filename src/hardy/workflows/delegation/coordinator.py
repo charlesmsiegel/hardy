@@ -272,121 +272,198 @@ def apply_plan(controller: DelegationController, subtree: str, plan: Coordinatio
     current = build_view(controller, subtree, authority=authority)
     outcomes: list[ActionOutcome] = []
     stale = plan.view_digest != current.digest
-    findings = FindingLedger(controller.store)
+    application = _PlanApplication(controller, subtree, plan, authority)
     for action in plan.actions:
         if stale:
             outcomes.append(_refused(action, "the plan names a view digest that is not the current view"))
-            continue
-        kind = action.action
-        if kind == "noop":
-            outcomes.append(ActionOutcome(action=action, applied=True))
-        elif kind == "human_decision":
-            controller.request_human_decision(subtree, str(action.args.get("question") or "a decision is needed"),
-                                              by=f"coordinator:{subtree}")
-            outcomes.append(ActionOutcome(action=action, applied=True))
-        elif kind == "synthesize":
-            controller.store.append(subtree, "coordinator.synthesis_requested", {"by": f"coordinator:{subtree}"})
-            outcomes.append(ActionOutcome(action=action, applied=True))
-        elif kind in {"spawn", "literature"}:
-            outcomes.append(_spawn(controller, subtree, action, authority,
-                                   task_mode="reduce" if kind == "literature" else None))
-        elif kind in {"verify", "adversarial"}:
-            outcomes.append(_spawn(controller, subtree, action, authority,
-                                   task_mode="verify" if kind == "verify" else "refute"))
-        elif kind in {"tranche", "reinforce"}:
-            problem = _in_subtree(controller, subtree, action.target)
-            if not authority.may_allocate_within_reserve:
-                outcomes.append(_refused(action, "authority: may_allocate_within_reserve is not granted"))
-            elif problem:
-                outcomes.append(_refused(action, problem))
-            elif action.target == subtree:
-                outcomes.append(_refused(action, "authority: growing its own reserve requires its parent"))
-            else:
-                checks = _checks(action)
-                if isinstance(checks, str):
-                    outcomes.append(_refused(action, checks))
-                    continue
-                if authority.approval_threshold_checks is not None and checks > authority.approval_threshold_checks:
-                    outcomes.append(_refused(action, "authority: above the approval threshold"))
-                    continue
-                try:
-                    decision = controller.reinforce(action.target, ResourceDelta(official_checks=checks),
-                                                    by=f"coordinator:{subtree}",
-                                                    reason=str(action.args.get("reason") or plan.rationale or kind))
-                    outcomes.append(ActionOutcome(action=action, applied=decision.granted is not None,
-                                                  refused_because=decision.refused_because))
-                except ValueError as error:
-                    outcomes.append(_refused(action, str(error)))
-        elif kind in {"pause", "resume"}:
-            problem = _in_subtree(controller, subtree, action.target)
-            if not authority.may_pause_resume:
-                outcomes.append(_refused(action, "authority: may_pause_resume is not granted"))
-            elif problem:
-                outcomes.append(_refused(action, problem))
-            else:
-                try:
-                    (controller.pause if kind == "pause" else controller.resume)(action.target, by=f"coordinator:{subtree}")
-                    outcomes.append(ActionOutcome(action=action, applied=True))
-                except ValueError as error:
-                    outcomes.append(_refused(action, str(error)))
-        elif kind in {"retire", "finish"}:
-            problem = _in_subtree(controller, subtree, action.target if kind == "retire" else subtree)
-            if not authority.may_retire:
-                outcomes.append(_refused(action, "authority: may_retire is not granted"))
-            elif problem:
-                outcomes.append(_refused(action, problem))
-            elif kind == "retire":
-                controller.cancel(action.target, reason=f"retired by coordinator:{subtree}")
-                outcomes.append(ActionOutcome(action=action, applied=True))
-            else:
-                try:
-                    controller.finish_subtree(subtree, synthesis=str(action.args.get("synthesis") or plan.rationale),
-                                              by=f"coordinator:{subtree}")
-                    outcomes.append(ActionOutcome(action=action, applied=True))
-                except ValueError as error:
-                    outcomes.append(_refused(action, str(error)))
-        elif kind == "lane":
-            problem = _in_subtree(controller, subtree, action.target)
-            if not authority.may_allocate_within_reserve:
-                outcomes.append(_refused(action, "authority: may_allocate_within_reserve is not granted"))
-            elif problem:
-                outcomes.append(_refused(action, problem))
-            else:
-                try:
-                    controller.set_lane(action.target, Lane(str(action.args.get("lane", "exploit"))),
-                                        by=f"coordinator:{subtree}")
-                    outcomes.append(ActionOutcome(action=action, applied=True))
-                except ValueError as error:
-                    outcomes.append(_refused(action, str(error)))
-        elif kind in {"discoverable", "push", "promote_up"}:
-            allowed = {"discoverable": authority.may_make_discoverable, "push": authority.may_push_findings,
-                       "promote_up": True}[kind]
-            if not allowed:
-                outcomes.append(_refused(action, f"authority: {kind} is not granted"))
-                continue
-            tree = controller.tree()
-            recipient = str(action.args.get("recipient") or tree.get(subtree).parent_id or subtree)
-            mode = {"discoverable": "discoverable", "push": "push", "promote_up": "upward"}[kind]
-            try:
-                findings.promote(str(action.target), recipient=recipient, mode=mode, selector="coordinator",
-                                 authorized_by=subtree, reason=str(action.args.get("reason") or plan.rationale or kind))
-                outcomes.append(ActionOutcome(action=action, applied=True))
-            except (PromotionRefused, ValueError) as error:
-                outcomes.append(_refused(action, str(error)))
-        elif kind == "request_admission":
-            if not authority.may_request_admission:
-                outcomes.append(_refused(action, "authority: may_request_admission is not granted"))
-            else:
-                controller.store.append(subtree, "admission.requested",
-                                        {"finding": action.target, "by": f"coordinator:{subtree}"})
-                outcomes.append(ActionOutcome(action=action, applied=True))
-        else:  # pragma: no cover - the Literal keeps this unreachable
-            outcomes.append(_refused(action, f"unknown action {kind}"))
+        else:
+            outcomes.append(application.apply(action))
     controller.store.append(subtree, "coordinator.plan_applied", {
         "view_digest": plan.view_digest,
         "observed_view_digest": observed_view_digest,
         "outcomes": [o.model_dump(mode="json") for o in outcomes]})
     return tuple(outcomes)
+
+
+class _PlanApplication:
+    """Apply one plan's actions under its frozen authority envelope, in recorded order."""
+
+    def __init__(
+        self,
+        controller: DelegationController,
+        subtree: str,
+        plan: CoordinationPlan,
+        authority: CoordinatorAuthority,
+    ) -> None:
+        self.controller = controller
+        self.subtree = subtree
+        self.plan = plan
+        self.authority = authority
+        self.findings = FindingLedger(controller.store)
+
+    def apply(self, action: PlanAction) -> ActionOutcome:
+        """Route an action to the policy family that owns its authority checks."""
+        kind = action.action
+        if kind == "noop":
+            return ActionOutcome(action=action, applied=True)
+        if kind == "human_decision":
+            self.controller.request_human_decision(
+                self.subtree,
+                str(action.args.get("question") or "a decision is needed"),
+                by=f"coordinator:{self.subtree}",
+            )
+            return ActionOutcome(action=action, applied=True)
+        if kind == "synthesize":
+            self.controller.store.append(
+                self.subtree,
+                "coordinator.synthesis_requested",
+                {"by": f"coordinator:{self.subtree}"},
+            )
+            return ActionOutcome(action=action, applied=True)
+        if kind in {"spawn", "literature", "verify", "adversarial"}:
+            mode = {
+                "spawn": None,
+                "literature": "reduce",
+                "verify": "verify",
+                "adversarial": "refute",
+            }[kind]
+            return _spawn(self.controller, self.subtree, action, self.authority, task_mode=mode)
+        if kind in {"tranche", "reinforce"}:
+            return self._allocate(action)
+        if kind in {"pause", "resume"}:
+            return self._pause_resume(action)
+        if kind in {"retire", "finish"}:
+            return self._retire_finish(action)
+        if kind == "lane":
+            return self._lane(action)
+        if kind in {"discoverable", "push", "promote_up"}:
+            return self._promote(action)
+        if kind == "request_admission":
+            if not self.authority.may_request_admission:
+                return _refused(action, "authority: may_request_admission is not granted")
+            self.controller.store.append(
+                self.subtree,
+                "admission.requested",
+                {"finding": action.target, "by": f"coordinator:{self.subtree}"},
+            )
+            return ActionOutcome(action=action, applied=True)
+        return _refused(action, f"unknown action {kind}")
+
+    def _allocate(self, action: PlanAction) -> ActionOutcome:
+        kind = action.action
+        problem = _in_subtree(self.controller, self.subtree, action.target)
+        if not self.authority.may_allocate_within_reserve:
+            return _refused(action, "authority: may_allocate_within_reserve is not granted")
+        elif problem:
+            return _refused(action, problem)
+        elif action.target == self.subtree:
+            return _refused(action, "authority: growing its own reserve requires its parent")
+        else:
+            checks = _checks(action)
+            if isinstance(checks, str):
+                return _refused(action, checks)
+            if (
+                self.authority.approval_threshold_checks is not None
+                and checks > self.authority.approval_threshold_checks
+            ):
+                return _refused(action, "authority: above the approval threshold")
+            try:
+                decision = self.controller.reinforce(
+                    action.target,
+                    ResourceDelta(official_checks=checks),
+                    by=f"coordinator:{self.subtree}",
+                    reason=str(action.args.get("reason") or self.plan.rationale or kind),
+                )
+                return ActionOutcome(
+                    action=action,
+                    applied=decision.granted is not None,
+                    refused_because=decision.refused_because,
+                )
+            except ValueError as error:
+                return _refused(action, str(error))
+
+    def _pause_resume(self, action: PlanAction) -> ActionOutcome:
+        kind = action.action
+        problem = _in_subtree(self.controller, self.subtree, action.target)
+        if not self.authority.may_pause_resume:
+            return _refused(action, "authority: may_pause_resume is not granted")
+        elif problem:
+            return _refused(action, problem)
+        else:
+            try:
+                (self.controller.pause if kind == "pause" else self.controller.resume)(
+                    action.target, by=f"coordinator:{self.subtree}"
+                )
+                return ActionOutcome(action=action, applied=True)
+            except ValueError as error:
+                return _refused(action, str(error))
+
+    def _retire_finish(self, action: PlanAction) -> ActionOutcome:
+        kind = action.action
+        problem = _in_subtree(
+            self.controller, self.subtree, action.target if kind == "retire" else self.subtree
+        )
+        if not self.authority.may_retire:
+            return _refused(action, "authority: may_retire is not granted")
+        elif problem:
+            return _refused(action, problem)
+        elif kind == "retire":
+            self.controller.cancel(action.target, reason=f"retired by coordinator:{self.subtree}")
+            return ActionOutcome(action=action, applied=True)
+        else:
+            try:
+                self.controller.finish_subtree(
+                    self.subtree,
+                    synthesis=str(action.args.get("synthesis") or self.plan.rationale),
+                    by=f"coordinator:{self.subtree}",
+                )
+                return ActionOutcome(action=action, applied=True)
+            except ValueError as error:
+                return _refused(action, str(error))
+
+    def _lane(self, action: PlanAction) -> ActionOutcome:
+        problem = _in_subtree(self.controller, self.subtree, action.target)
+        if not self.authority.may_allocate_within_reserve:
+            return _refused(action, "authority: may_allocate_within_reserve is not granted")
+        elif problem:
+            return _refused(action, problem)
+        else:
+            try:
+                self.controller.set_lane(
+                    action.target,
+                    Lane(str(action.args.get("lane", "exploit"))),
+                    by=f"coordinator:{self.subtree}",
+                )
+                return ActionOutcome(action=action, applied=True)
+            except ValueError as error:
+                return _refused(action, str(error))
+
+    def _promote(self, action: PlanAction) -> ActionOutcome:
+        kind = action.action
+        allowed = {
+            "discoverable": self.authority.may_make_discoverable,
+            "push": self.authority.may_push_findings,
+            "promote_up": True,
+        }[kind]
+        if not allowed:
+            return _refused(action, f"authority: {kind} is not granted")
+        tree = self.controller.tree()
+        recipient = str(
+            action.args.get("recipient") or tree.get(self.subtree).parent_id or self.subtree
+        )
+        mode = {"discoverable": "discoverable", "push": "push", "promote_up": "upward"}[kind]
+        try:
+            self.findings.promote(
+                str(action.target),
+                recipient=recipient,
+                mode=mode,
+                selector="coordinator",
+                authorized_by=self.subtree,
+                reason=str(action.args.get("reason") or self.plan.rationale or kind),
+            )
+            return ActionOutcome(action=action, applied=True)
+        except (PromotionRefused, ValueError) as error:
+            return _refused(action, str(error))
 
 
 # -- the model coordinator ------------------------------------------------------------
