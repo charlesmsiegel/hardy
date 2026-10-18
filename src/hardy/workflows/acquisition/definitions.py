@@ -62,6 +62,7 @@ class LocalDefinition(FrozenModel):
 
     @model_validator(mode="after")
     def check_shape(self) -> Self:
+        """Require one Lean identifier and command-free type/body fragments before materialization."""
         if not re.fullmatch(IDENTIFIER, self.name):
             raise ValueError("definition name must be a single Lean identifier")
         _fragment(self.lean_type)
@@ -88,6 +89,7 @@ class OpaqueDefinition(FrozenModel):
 
     @model_validator(mode="after")
     def check_shape(self) -> Self:
+        """Keep the carrier fragment explicit and all proposed assumption names distinct."""
         if not re.fullmatch(IDENTIFIER, self.name):
             raise ValueError("opaque name must be a single Lean identifier")
         _fragment(self.lean_type)
@@ -156,6 +158,7 @@ class DefinitionResolver:
 
     def resolve(self, snapshot: LedgerSnapshot, obligation: Obligation,
                 gap: ClassifiedGap | None = None) -> ResolverResult:
+        """Try searched mappings and concrete bodies before returning any explicit opaque assumption work."""
         obligation = Obligation.model_validate(obligation.model_dump())
         item = snapshot.get(obligation.item)
         if (not isinstance(item, ProjectItem) or obligation.kind != ObligationKind.DEFINE

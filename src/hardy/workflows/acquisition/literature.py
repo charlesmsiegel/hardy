@@ -136,6 +136,7 @@ class LiteratureResolver:
         self.admission = AdmissionPolicy()
 
     def resolve(self, snapshot: LedgerSnapshot, work: Obligation, gap: ClassifiedGap) -> ResolverResult:
+        """Compare exact source statements, retaining all hypothesis and admission work in the proposal."""
         work = Obligation.model_validate(work.model_dump())
         gap = ClassifiedGap.model_validate(gap.model_dump())
         if gap.kind.value != "literature":

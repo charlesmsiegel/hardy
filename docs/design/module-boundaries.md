@@ -188,6 +188,40 @@ owner at a time, and never wrap a formerly atomic save in independent
 per-collaborator locks: two locks taken in two orders is a deadlock, and a save
 split across two owners is a partial write nobody planned.
 
+## Workflow store ownership
+
+The project ledger records mathematical subjects, context, required work and
+claimed evidence. `ledger/validation.py` owns exact references, revision identity
+and context membership; `ledger/policy.py` separately authenticates capability
+evidence and acceptance decisions. Acquisition returns proposals and prerequisite
+work to that policy. A search match, resolver result or serialized acceptance
+reference carries no authority by itself.
+
+Delegation records execution about those subjects. `delegation/replay.py` derives
+one candidate tree and publishes it only after all events succeed; the store owns
+bytes, locks and live-session ownership, while the budget reader derives resource
+liability from the tree. A new lifecycle event belongs in replay's transition
+rules, with explicit budget and attention effects where needed. Completion of a
+worker never closes mathematical work. `TaskMode` recognizes research intentions
+within an open persisted label vocabulary; the scheduler alone maps those
+intentions to default lanes, and custom labels retain the ordinary work lane.
+
+The journals have different durable envelopes. Foundation's typed `Journal`
+uses `hardy.journal/v1`; the ledger uses `hardy.ledger/transaction/v1` batches and
+context activation over a fresh authoritative or ancestor base; delegation uses
+hash-chained events in one JSONL file, with reservation and owner checks under its
+writer lock. The shared claim, realization and promotion stores already use
+foundation's journal and supply their own invariant validators. A common
+envelope implementation must preserve these bytes, transaction boundaries,
+fresh-base shadowing checks and ownership checks; replacing a store with the
+generic journal directly would change its contract.
+
+Recorded-run validators only read finished artifacts. Their checks name the
+independent witnesses each claim owes: exact source bytes, capability reports,
+terminal events, reader sessions and document identities. Adding an artifact
+extends its corresponding check; it does not give the reader a runtime capable
+of producing the evidence being judged.
+
 ## Digest coupling
 
 Two digests tie measurement identity to the source tree, and editing the wrong

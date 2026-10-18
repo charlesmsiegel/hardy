@@ -27,6 +27,7 @@ class LedgerLookup(Protocol):
 
 @dataclass(frozen=True)
 class LedgerSnapshot:
+    """Immutable history with separate exact-version and current-head indexes; identity grants no trust."""
     records: tuple[LedgerRecord, ...] = ()
     revision: int = 0
     active_context: VersionRef | None = None
@@ -39,19 +40,23 @@ class LedgerSnapshot:
         object.__setattr__(self, "_heads", MappingProxyType({r.id: r for r in self.records}))
 
     def get(self, ref: VersionRef) -> LedgerRecord:
+        """Require the exact recorded version; advancing its logical head never redirects this lookup."""
         try:
             return self._exact[ref]
         except KeyError:
             raise ValueError(f"unknown exact reference: {ref.id}@{ref.digest}") from None
 
     def head(self, id: str) -> LedgerRecord:
+        """Require the latest recorded version of one logical identity."""
         try:
             return self._heads[id]
         except KeyError:
             raise ValueError(f"unknown record identity: {id}") from None
 
     def head_or_none(self, id: str) -> LedgerRecord | None:
+        """Distinguish an absent identity from one whose latest revision is present."""
         return self._heads.get(id)
 
     def current(self, record_type: type[RecordT]) -> tuple[RecordT, ...]:
+        """Select current heads of a record category while retaining historical versions in records."""
         return tuple(r for r in self._heads.values() if isinstance(r, record_type))

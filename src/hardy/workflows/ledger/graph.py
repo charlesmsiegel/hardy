@@ -49,12 +49,14 @@ def _ordered(refs: Iterable[VersionRef]) -> tuple[VersionRef, ...]:
 
 @dataclass(frozen=True)
 class ActiveContext:
+    """The exact lexical context and the declarations and bindings inherited through its lineage."""
     context: VersionRef | None
     declarations: tuple[ProjectItem, ...] = ()
     bindings: tuple[ScopedBinding, ...] = ()
 
 
 class LedgerGraph:
+    """Query distinct dependency, context, research and transport graphs without establishing truth."""
     def __init__(self, snapshot: LedgerSnapshot):
         self.snapshot = snapshot
         self._records = {record.ref: record for record in snapshot.records}

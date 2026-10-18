@@ -52,6 +52,7 @@ class InterfaceField(FrozenModel):
 
     @model_validator(mode="after")
     def check_shape(self) -> Self:
+        """Keep each field a single Lean fragment with distinct named dependencies."""
         if not re.fullmatch(IDENTIFIER, self.name):
             raise ValueError("interface field must have a single Lean identifier")
         _fragment(self.lean_type)
@@ -72,6 +73,7 @@ class InterfacePlan(FrozenModel):
 
     @model_validator(mode="after")
     def check_shape(self) -> Self:
+        """Require a relative destination and an unambiguous set of named fields and requirements."""
         if not re.fullmatch(IDENTIFIER, self.name):
             raise ValueError("interface name must be a single Lean identifier")
         safe_relative(self.path)
@@ -114,6 +116,7 @@ class InterfaceResolver:
 
     def resolve(self, snapshot: LedgerSnapshot, obligation: Obligation,
                 gap: ClassifiedGap | None = None) -> ResolverResult:
+        """Return open prerequisites or an exact checked-save receipt; ledger acceptance is still separate."""
         obligation = Obligation.model_validate(obligation.model_dump())
         representation = _current_representation(snapshot, obligation)
         plan = InterfacePlan.model_validate(self.select_plan(snapshot, obligation).model_dump())

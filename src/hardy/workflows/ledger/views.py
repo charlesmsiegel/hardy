@@ -28,6 +28,7 @@ from hardy.workflows.ledger.state import LedgerSnapshot
 
 @dataclass(frozen=True)
 class ContextView:
+    """The lexical parameters, hypotheses and bindings visible from an exact context."""
     context: VersionRef | None
     parameters: tuple[ProjectItem, ...] = ()
     local_hypotheses: tuple[ProjectItem, ...] = ()
@@ -36,6 +37,7 @@ class ContextView:
 
 @dataclass(frozen=True)
 class ResearchView:
+    """Separate open questions and attempted routes from routes whose failure remains recorded."""
     open_questions: tuple[ProjectItem, ...]
     approaches: tuple[ProjectItem, ...]
     failed_approaches: tuple[ProjectItem, ...]
@@ -43,12 +45,14 @@ class ResearchView:
 
 @dataclass(frozen=True)
 class ConceptView:
+    """A concept and its explicit representation choices, without identifying them with each other."""
     concept: ProjectItem
     representations: tuple[ProjectItem, ...]
 
 
 @dataclass(frozen=True)
 class CoverageView:
+    """Exact subjects whose formalization or citation work is accepted, alongside the remaining work."""
     formalized: tuple[VersionRef, ...]
     formalization_open: tuple[VersionRef, ...]
     citations_checked: tuple[VersionRef, ...]
@@ -57,6 +61,7 @@ class CoverageView:
 
 @dataclass(frozen=True)
 class StaleArtifact:
+    """An exact dependency edge whose expected version differs from the current recorded head."""
     record: VersionRef
     relation: VersionRef
     expected: VersionRef
@@ -65,6 +70,7 @@ class StaleArtifact:
 
 @dataclass(frozen=True)
 class TrustView:
+    """Global assumptions and local context, with missing policy authentication visible."""
     external_assumptions: tuple[VersionRef, ...]
     unaccepted_external: tuple[VersionRef, ...]
     local_context: ContextView
@@ -73,6 +79,7 @@ class TrustView:
 
 @dataclass(frozen=True)
 class PublicationView:
+    """A publication closure and every condition still preventing authenticated readiness."""
     root: VersionRef
     closure: tuple[VersionRef, ...]
     unestablished: tuple[VersionRef, ...]
@@ -92,6 +99,7 @@ _CLAIMS = frozenset({
 
 
 class LedgerViews:
+    """Compose exact graph structure with optional policy authentication; missing readers leave work open."""
     def __init__(self, snapshot: LedgerSnapshot, policy: LedgerPolicy | None = None):
         self.snapshot = snapshot
         self.graph = LedgerGraph(snapshot)

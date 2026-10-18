@@ -111,11 +111,13 @@ class _StartedElsewhere(Exception):
 
 @dataclass(frozen=True)
 class RootResources:
+    """The reservation and concurrency ceilings one session contributes to the shared root epoch."""
     lease: ResourceLease
     slots: int
 
 
 class DelegationController:
+    """Own live launches and journaled execution transitions while mathematical authority stays in the ledger."""
     def __init__(self, store: DelegationStore, ledger: LedgerStore, *, executor: WorkerExecutor,
                  open_worker: OpenWorker, root: RootResources, notify: Callable[[str], None],
                  interrupt: Callable[[AttentionItem], None] | None = None,
@@ -136,7 +138,7 @@ class DelegationController:
         #: Created but not yet holding a slot; the scheduler decides when.
         self._pending: dict[str, WorkerLaunch] = {}
         #: Coordinators attached explicitly, never instantiated on worker count.
-        self._coordinators: dict[str, Any] = {}
+        self._coordinators: dict[str, object] = {}
         self._closed = False
         self._open_worker = open_worker
         self.root = root
@@ -161,12 +163,15 @@ class DelegationController:
     # -- views --------------------------------------------------------------
 
     def tree(self) -> DelegationTree:
+        """Read a detached replay of the execution journal, including work owned by other live sessions."""
         return self.store.tree()
 
     def attention(self) -> AttentionInbox:
+        """Expose the derived inbox; delivery receipts and explicit handling remain distinct."""
         return self._inbox
 
     def status(self) -> dict[str, Any]:
+        """Report execution counts and root reservation liabilities without grading mathematical results."""
         tree = self.tree()
         ledger = LeaseLedger(tree)
         counts: dict[str, int] = {}
@@ -190,6 +195,7 @@ class DelegationController:
         }
 
     def inspect(self, id: str) -> dict[str, Any]:
+        """Join one exact execution node with derived usage, pending attention and artifact location."""
         tree = self.tree()
         delegation = tree.get(id)
         ledger = LeaseLedger(tree)
@@ -675,18 +681,20 @@ class DelegationController:
             self._dispatch()
 
     def request_human_decision(self, id: str, question: str, *, by: str) -> None:
+        """Journal and route a sticky decision request without granting any new authority."""
         with self._lock:
             self.tree().get(id)
             event = self.store.append(id, "coordinator.human_decision_requested", {"question": question, "by": by})
             self._route(id, event)
 
-    def attach_coordinator(self, id: str, coordinator: Any) -> None:
+    def attach_coordinator(self, id: str, coordinator: object) -> None:
         """Explicit: a coordinator exists because somebody decided one was useful here."""
         with self._lock:
             self.tree().get(id)
             self._coordinators[id] = coordinator
 
-    def coordinator_for(self, id: str) -> Any | None:
+    def coordinator_for(self, id: str) -> object | None:
+        """Read an explicitly attached coordinator; this registry never invokes it implicitly."""
         return self._coordinators.get(id)
 
     # -- scheduling ---------------------------------------------------------
@@ -803,6 +811,7 @@ class DelegationController:
         return True
 
     def pin(self, id: str, kind: PinKind, *, by: str, value: int | None = None) -> Pin:
+        """Journal a human or coordinator scheduling constraint before considering pending launches."""
         with self._lock:
             self.tree().get(id)
             pin = Pin(delegation_id=id, kind=kind, by=by, value=value)
@@ -811,6 +820,7 @@ class DelegationController:
             return pin
 
     def unpin(self, id: str, kind: PinKind, *, by: str) -> None:
+        """Remove one attributed scheduling constraint and reconsider queued work."""
         with self._lock:
             self.tree().get(id)
             self.store.append(id, "scheduler.unpin", {"kind": kind, "by": by})

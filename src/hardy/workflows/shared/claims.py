@@ -13,6 +13,7 @@ false.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -126,36 +127,44 @@ class LinkStore:
         self._journal = Journal(Path(directory), types={"SourceClaimLink": SourceClaimLink})
 
     def snapshot(self) -> JournalSnapshot:
+        """Read all interpretation revisions with the journal revision used for optimistic writes."""
         return self._journal.read()
 
     def heads(self, snapshot: JournalSnapshot | None = None) -> dict[str, SourceClaimLink]:
+        """Project each link identity to its latest recorded interpretation state."""
         found: dict[str, SourceClaimLink] = {}
         for record in (snapshot or self.snapshot()).of(SourceClaimLink):
             found[record.id] = record
         return found
 
     def get(self, link_id: str) -> SourceClaimLink:
+        """Require the current interpretation state of one stable link identity."""
         try:
             return self.heads()[link_id]
         except KeyError:
             raise LinkError(f"unknown link {link_id}") from None
 
     def history(self, link_id: str) -> tuple[SourceClaimLink, ...]:
+        """Retain every proposal and transition for one interpretation identity."""
         return tuple(r for r in self.snapshot().of(SourceClaimLink) if r.id == link_id)
 
     def links_for_node(self, artifact_sha256: str, node: str) -> tuple[SourceClaimLink, ...]:
+        """Find current links for this exact artifact and stable source node."""
         return tuple(link for link in self.heads().values() if link.artifact_sha256 == artifact_sha256 and link.node == node)
 
     def links_for_artifact(self, artifact_sha256: str) -> tuple[SourceClaimLink, ...]:
+        """Find current interpretations of one immutable source artifact."""
         return tuple(link for link in self.heads().values() if link.artifact_sha256 == artifact_sha256)
 
     def links_for_claim(self, claim_id: str) -> tuple[SourceClaimLink, ...]:
+        """Find current links naming this logical claim; callers still check its exact revision."""
         return tuple(link for link in self.heads().values() if link.claim is not None and link.claim.id == claim_id)
 
     def append(self, link: SourceClaimLink, *, expected_revision: int) -> JournalSnapshot:
+        """Validate link identity and admission invariants before the optimistic journal append."""
         return self._journal.append([link], expected_revision=expected_revision, validate=_validate)
 
-    def append_retrying(self, link: SourceClaimLink, *, precondition) -> SourceClaimLink:
+    def append_retrying(self, link: SourceClaimLink, *, precondition: Callable[[dict[str, SourceClaimLink]], None]) -> SourceClaimLink:
         """Append a link whose validity does not depend on the exact head, retrying past races."""
         for _ in range(RETRIES):
             snapshot = self.snapshot()
@@ -249,6 +258,7 @@ class ClaimLinker:
     # --- proposing ----------------------------------------------------------
 
     def propose(self, sha256: str, tree_id: str, node_id: str, proposal: InterpretationProposal) -> SourceClaimLink:
+        """Record an unadmitted interpretation, retaining competing candidates as explicit ambiguity."""
         tree = self.library.trees.get(sha256, tree_id)
         node = tree.node(node_id)
         span = node.statement_span or node.span
@@ -292,6 +302,7 @@ class ClaimLinker:
         self, link_id: str, *, verdict: FaithfulnessVerdict | None = None, approval: HumanApproval | None = None,
         choose: VersionRef | Literal["proposed"] | None = None,
     ) -> SourceClaimLink:
+        """Bind an exact reading verdict or human approval before minting or attaching shared provenance."""
         if verdict is not None and not verdict.agreed:
             raise LinkError(f"the faithfulness verdict is {verdict.outcome.value}; only an agreeing read admits a link")
         if verdict is None and approval is None:
@@ -388,6 +399,7 @@ class ClaimLinker:
         self.claims.append((ProjectItem.model_validate(updated.model_dump(mode="json")),), expected_revision=ledger.revision)
 
     def reject(self, link_id: str, *, actor: str, reason: str) -> SourceClaimLink:
+        """Record an attributed rejection while retaining the interpretation history."""
         snapshot = self.links.snapshot()
         link = self.links.heads(snapshot).get(link_id)
         if link is None:

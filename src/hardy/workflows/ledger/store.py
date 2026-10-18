@@ -87,6 +87,7 @@ class LedgerStore:
         return WriteGuard(root.directory / "ledger", create=create)
 
     def read(self) -> LedgerSnapshot:
+        """Replay guarded transactions over a fresh origin; retained references never float to heads."""
         if not self.project.exists():
             return self._origin()
         root = WriteGuard(self.project)
@@ -135,6 +136,7 @@ class LedgerStore:
         self, records: Iterable[LedgerRecord], *, expected_revision: int,
         activate: VersionRef | None = None, validate: Validator | None = None,
     ) -> LedgerSnapshot:
+        """Commit one validated batch under the writer lock after checking the expected revision."""
         values = []
         for record in records:
             record_type = RECORD_TYPES.get(type(record).__name__)
