@@ -472,66 +472,83 @@ def page_spans_from(mapping: RepresentationMapping) -> dict[int, RepresentationS
 def validate_tree(tree: SourceTree, representations: Mapping[str, DerivedRepresentation], texts: Mapping[str, str]) -> tuple[Diagnostic, ...]:
     """Mechanical checks; any error diagnostic makes the tree inadmissible."""
     problems: list[Diagnostic] = []
-
-    def error(code: str, detail: str) -> None:
-        problems.append(Diagnostic(code=code, detail=detail, severity="error"))
-
     ids = [n.id for n in tree.nodes]
     if len(set(ids)) != len(ids):
-        error("duplicate_node_id", "two nodes share an id")
+        problems.append(_tree_problem("duplicate_node_id", "two nodes share an id"))
     by_id = {n.id: n for n in tree.nodes}
     for rep in tree.representations:
         record = representations.get(rep)
         if record is None or record.artifact_sha256 != tree.artifact_sha256:
-            error("foreign_representation", f"representation {rep} is not derived from artifact {tree.artifact_sha256}")
+            problems.append(_tree_problem("foreign_representation", f"representation {rep} is not derived from artifact {tree.artifact_sha256}"))
     for node in tree.nodes:
         for span in (node.span, node.statement_span):
-            if span is None:
-                continue
-            if span.artifact_sha256 != tree.artifact_sha256:
-                error("foreign_span", f"node {node.id} spans a different artifact")
-            content = []
-            for part in span.ranges:
-                if part.representation not in tree.representations:
-                    error("unmapped_span", f"node {node.id} names representation {part.representation} the tree does not use")
-                    continue
-                text = texts.get(part.representation)
-                if text is None:
-                    error("representation_unavailable", f"representation {part.representation} text is not available for validation")
-                    continue
-                if part.end > len(text):
-                    error("span_out_of_bounds", f"node {node.id} runs past the end of {part.representation}")
-                    continue
-                content.append(text[part.start:part.end])
-            if content and text_digest("".join(content)) != span.content_sha256:
-                error("span_digest_mismatch", f"node {node.id} span content does not match its digest")
-        if node.parent is not None and node.parent not in by_id:
-            error("missing_parent", f"node {node.id} names unknown parent {node.parent}")
-        seen = {node.id}
-        cursor = node.parent
-        while cursor is not None:
-            if cursor in seen:
-                error("parent_cycle", f"node {node.id} is its own ancestor")
-                break
-            seen.add(cursor)
-            cursor = by_id[cursor].parent if cursor in by_id else None
+            if span is not None:
+                problems.extend(_span_problems(node.id, span, tree, texts))
+        problems.extend(_parent_problems(node, by_id))
     for parent in {n.parent for n in tree.nodes}:
         children = tree.children(parent)
         starts = [c.span.ranges[0].start for c in children]
         if starts != sorted(starts):
-            error("reading_order", f"children of {parent!r} are not in reading order")
+            problems.append(_tree_problem("reading_order", f"children of {parent!r} are not in reading order"))
     for edge in tree.edges:
-        if edge.source not in by_id or edge.target not in by_id:
-            error("dangling_edge", f"{edge.kind.value} edge names an unknown node")
-            continue
-        if edge.kind is SourceEdgeKind.PROOF_OF:
-            if by_id[edge.source].kind is not NodeKind.PROOF:
-                error("proof_of_source", f"{edge.source} is not a proof node")
-            if by_id[edge.target].kind not in STATEMENT_KINDS:
-                error("proof_of_target", f"{edge.target} is not a statement node")
-        if edge.kind is SourceEdgeKind.CONTAINS and by_id[edge.target].parent != edge.source:
-            error("contains_mismatch", f"{edge.target} is not a child of {edge.source}")
+        problems.extend(_edge_problems(edge, by_id))
     return tuple(problems)
+
+
+def _tree_problem(code: str, detail: str) -> Diagnostic:
+    return Diagnostic(code=code, detail=detail, severity="error")
+
+
+def _span_problems(node_id: str, span: SourceSpan, tree: SourceTree, texts: Mapping[str, str]) -> list[Diagnostic]:
+    """Check attribution, resolvable ranges and the digest of the available content."""
+    problems = []
+    if span.artifact_sha256 != tree.artifact_sha256:
+        problems.append(_tree_problem("foreign_span", f"node {node_id} spans a different artifact"))
+    content = []
+    for part in span.ranges:
+        if part.representation not in tree.representations:
+            problems.append(_tree_problem("unmapped_span", f"node {node_id} names representation {part.representation} the tree does not use"))
+            continue
+        text = texts.get(part.representation)
+        if text is None:
+            problems.append(_tree_problem("representation_unavailable", f"representation {part.representation} text is not available for validation"))
+            continue
+        if part.end > len(text):
+            problems.append(_tree_problem("span_out_of_bounds", f"node {node_id} runs past the end of {part.representation}"))
+            continue
+        content.append(text[part.start:part.end])
+    if content and text_digest("".join(content)) != span.content_sha256:
+        problems.append(_tree_problem("span_digest_mismatch", f"node {node_id} span content does not match its digest"))
+    return problems
+
+
+def _parent_problems(node: SourceNode, by_id: Mapping[str, SourceNode]) -> list[Diagnostic]:
+    problems = []
+    if node.parent is not None and node.parent not in by_id:
+        problems.append(_tree_problem("missing_parent", f"node {node.id} names unknown parent {node.parent}"))
+    seen = {node.id}
+    cursor = node.parent
+    while cursor is not None:
+        if cursor in seen:
+            problems.append(_tree_problem("parent_cycle", f"node {node.id} is its own ancestor"))
+            break
+        seen.add(cursor)
+        cursor = by_id[cursor].parent if cursor in by_id else None
+    return problems
+
+
+def _edge_problems(edge: SourceEdge, by_id: Mapping[str, SourceNode]) -> list[Diagnostic]:
+    if edge.source not in by_id or edge.target not in by_id:
+        return [_tree_problem("dangling_edge", f"{edge.kind.value} edge names an unknown node")]
+    problems = []
+    if edge.kind is SourceEdgeKind.PROOF_OF:
+        if by_id[edge.source].kind is not NodeKind.PROOF:
+            problems.append(_tree_problem("proof_of_source", f"{edge.source} is not a proof node"))
+        if by_id[edge.target].kind not in STATEMENT_KINDS:
+            problems.append(_tree_problem("proof_of_target", f"{edge.target} is not a statement node"))
+    if edge.kind is SourceEdgeKind.CONTAINS and by_id[edge.target].parent != edge.source:
+        problems.append(_tree_problem("contains_mismatch", f"{edge.target} is not a child of {edge.source}"))
+    return problems
 
 
 class TreeStore:
