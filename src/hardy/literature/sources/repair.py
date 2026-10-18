@@ -23,9 +23,10 @@ from .contracts import (
     NodeKind,
     SourceEdge,
     SourceEdgeKind,
+    SourceNode,
     SourceTree,
 )
-from .trees import Unit, _stamp, node_record
+from .trees import Unit, _stamp, node_record, reading_order
 
 STRUCTURE_HINT = re.compile(r"\b(THEOREM|LEMMA|PROPOSITION|COROLLARY|DEFINITION|Theorem|Lemma|Proposition|Corollary|Definition|Proof|PROOF)\b")
 
@@ -65,6 +66,7 @@ Repairer = Callable[[RepairWindow], RepairProposal]
 
 
 def weak_regions(tree: SourceTree, texts: Mapping[str, str]) -> tuple[RepairWindow, ...]:
+    """Attribute windows with unresolved structure, using only available source text."""
     windows: list[RepairWindow] = []
     for node in tree.nodes:
         part = node.span.ranges[0]
@@ -118,6 +120,7 @@ def _leftover(text: str, start: int, end: int) -> tuple[ProposedUnit, ...]:
 
 
 def apply_repair(tree: SourceTree, proposal: RepairProposal, texts: Mapping[str, str]) -> SourceTree | tuple[Diagnostic, ...]:
+    """Supersede one leaf's classification, retaining uncovered text and prior history."""
     problems = check_proposal(proposal)
     if problems:
         return problems
@@ -132,39 +135,9 @@ def apply_repair(tree: SourceTree, proposal: RepairProposal, texts: Mapping[str,
     except KeyError:
         return (Diagnostic(code="repair_unknown_node", severity="error", detail=f"node {window.node} is not in tree {tree.id}"),)
     kept = [n for n in tree.nodes if n.id != target.id]
-    taken = {n.id for n in kept}
-    page_spans = None
-    provenance = f"{proposal.proposer}/{proposal.proposer_version} repair of {tree.id}"
-    new_nodes = []
-    # Window text no proposed unit covers is not discarded: it stays readable
-    # as unknown material, as `build_tree` keeps every uncovered run.
-    units = list(proposal.units)
-    position = window.start
-    for unit in sorted(proposal.units, key=lambda u: u.start):
-        units.extend(_leftover(text, position, unit.start))
-        position = max(position, unit.end)
-    units.extend(_leftover(text, position, window.end))
-    for unit in sorted(units, key=lambda u: u.start):
-        record = node_record(tree.artifact_sha256, window.representation, text,
-                             Unit(kind=unit.kind, start=unit.start, end=unit.end, title=unit.title, number=unit.number,
-                                  number_origin="explicit" if unit.number else "none", label=unit.label, boundary=unit.boundary_status,
-                                  statement_end=unit.statement_end if unit.kind in STATEMENT_KINDS else None),
-                             parent=target.parent, start=unit.start, end=unit.end, order=0, page_spans=page_spans, taken=taken, provenance=provenance)
-        taken.add(record.id)
-        new_nodes.append((unit, record))
-    nodes = sorted(kept + [r for _, r in new_nodes], key=lambda n: n.span.ranges[0].start)
-    counters: dict[str | None, int] = {}
-    renumbered = []
-    for node in nodes:
-        order = counters.get(node.parent, 0)
-        counters[node.parent] = order + 1
-        renumbered.append(node.model_copy(update={"order": order}) if node.order != order else node)
-    edges = [e for e in tree.edges if e.source != target.id and e.target != target.id]
-    edges += [SourceEdge(kind=SourceEdgeKind.CONTAINS, source=r.parent, target=r.id) for _, r in new_nodes if r.parent]
-    by_number = {n.number: n for n in renumbered if n.kind in STATEMENT_KINDS and n.number}
-    for unit, record in new_nodes:
-        if unit.kind is NodeKind.PROOF and unit.proof_of and unit.proof_of in by_number:
-            edges.append(SourceEdge(kind=SourceEdgeKind.PROOF_OF, source=record.id, target=by_number[unit.proof_of].id))
+    new_nodes = _replacement_nodes(tree, proposal, target, text, {n.id for n in kept})
+    renumbered = reading_order(kept + [r for _, r in new_nodes])
+    edges = _repair_edges(tree, target, new_nodes, renumbered)
     diagnostics = tuple(d for d in tree.diagnostics) + (Diagnostic(
         code="model_repair", severity="info",
         detail=f"{proposal.proposer}/{proposal.proposer_version} reclassified window {window.start}:{window.end} into "
@@ -177,3 +150,45 @@ def apply_repair(tree: SourceTree, proposal: RepairProposal, texts: Mapping[str,
         builder_version=tree.builder_version, representations=tree.representations, nodes=tuple(renumbered), edges=tuple(edges),
         diagnostics=diagnostics, supersedes=tree.id, built_at=_stamp(),
     )
+
+
+def _covered_units(proposal: RepairProposal, text: str) -> list[ProposedUnit]:
+    # Window text no proposed unit covers is not discarded: it stays readable
+    # as unknown material, as `build_tree` keeps every uncovered run.
+    units = list(proposal.units)
+    position = proposal.window.start
+    for unit in sorted(proposal.units, key=lambda u: u.start):
+        units.extend(_leftover(text, position, unit.start))
+        position = max(position, unit.end)
+    units.extend(_leftover(text, position, proposal.window.end))
+    return sorted(units, key=lambda u: u.start)
+
+
+def _replacement_nodes(
+    tree: SourceTree, proposal: RepairProposal, target: SourceNode, text: str, taken: set[str],
+) -> list[tuple[ProposedUnit, SourceNode]]:
+    provenance = f"{proposal.proposer}/{proposal.proposer_version} repair of {tree.id}"
+    new_nodes = []
+    window = proposal.window
+    units = _covered_units(proposal, text)
+    for unit in units:
+        record = node_record(tree.artifact_sha256, window.representation, text,
+                             Unit(kind=unit.kind, start=unit.start, end=unit.end, title=unit.title, number=unit.number,
+                                  number_origin="explicit" if unit.number else "none", label=unit.label, boundary=unit.boundary_status,
+                                  statement_end=unit.statement_end if unit.kind in STATEMENT_KINDS else None),
+                             parent=target.parent, start=unit.start, end=unit.end, order=0, page_spans=None, taken=taken, provenance=provenance)
+        taken.add(record.id)
+        new_nodes.append((unit, record))
+    return new_nodes
+
+
+def _repair_edges(
+    tree: SourceTree, target: SourceNode, new_nodes: list[tuple[ProposedUnit, SourceNode]], nodes: list[SourceNode],
+) -> list[SourceEdge]:
+    edges = [e for e in tree.edges if e.source != target.id and e.target != target.id]
+    edges += [SourceEdge(kind=SourceEdgeKind.CONTAINS, source=r.parent, target=r.id) for _, r in new_nodes if r.parent]
+    by_number = {n.number: n for n in nodes if n.kind in STATEMENT_KINDS and n.number}
+    for unit, record in new_nodes:
+        if unit.kind is NodeKind.PROOF and unit.proof_of and unit.proof_of in by_number:
+            edges.append(SourceEdge(kind=SourceEdgeKind.PROOF_OF, source=record.id, target=by_number[unit.proof_of].id))
+    return edges

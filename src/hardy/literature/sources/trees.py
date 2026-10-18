@@ -169,7 +169,8 @@ def _uncovered_ranges(text: str, nodes: list[SourceNode], headings: list[Unit]) 
     return gaps
 
 
-def _reading_order(nodes: list[SourceNode]) -> list[SourceNode]:
+def reading_order(nodes: list[SourceNode]) -> list[SourceNode]:
+    """Sort nodes by text offset and assign sibling orders, preserving ties and ids."""
     nodes.sort(key=lambda node: node.span.ranges[0].start)
     ordered: list[SourceNode] = []
     counters: dict[str | None, int] = {}
@@ -370,7 +371,7 @@ def build_tree(
         owner = containers.owner_at(start)
         unit = Unit(kind=NodeKind.UNKNOWN, start=start, end=end, boundary="high")
         make_node(unit, ids.get(id(owner)) if owner else None, start, end)
-    nodes = _reading_order(nodes)
+    nodes = reading_order(nodes)
 
     # 6. Edges: containment, proof_of, source_refers_to.
     edges: list[SourceEdge] = [SourceEdge(kind=SourceEdgeKind.CONTAINS, source=n.parent, target=n.id) for n in nodes if n.parent]
