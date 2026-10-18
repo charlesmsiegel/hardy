@@ -2,8 +2,8 @@
 
 Lean and Tectonic are untrusted in the sense that matters here: they can run
 long, print without end, or die. Every toolchain child Hardy runs to completion
-goes through `run_process` (`run_guarded` is `run_process` with the inherited
-environment), so a run's time and output budgets are enforced in one place, and
+shares one captured execution path through `run_process` or `run_guarded`, so
+a run's time and output budgets are enforced in one place, and
 child output is decoded as UTF-8 rather than by whatever the host's locale
 happens to be. Lean prints `⊢` and `∀`; a Windows console codepage cannot.
 
@@ -693,27 +693,26 @@ def run_guarded(
     *,
     cwd: Path | None = None,
     timeout: float,
+    env: dict[str, str] | None = None,
     max_output_bytes: int = _GUARDED_OUTPUT_BYTES,
 ) -> GuardedResult:
-    """`run_process` for a child that needs this process's whole environment.
+    """A captured child with an inherited or explicitly replaced environment.
 
-    For the callers that cannot have `run_process`'s default: a TeX
-    installation and a Lake project both need the environment they were
-    started with, and a toolchain child is handed only the few variables a
-    toolchain needs to find itself. What they still need is everything else
-    -- the group, the register, the grace, and the escalation -- and they get
-    exactly `run_process`'s, so there is one ladder to keep whole rather than
-    one per caller. The cost is the one `ProcessSpec.environment` names:
-    whatever this process holds in its environment, credentials included,
-    the child holds too.
+    A TeX installation and a Lake project need the environment they were
+    started with, while `run_process` defaults to a restricted environment.
+    Both share capture, group registration and escalation. `env=None`
+    inherits everything, credentials included; any explicit mapping replaces
+    that environment entirely, even `{}`.
+    After an unanswered interrupt, guarded children retain their two-second
+    SIGTERM cleanup grace; a second press still skips it.
 
     Output is bounded while it arrives, before any caller trims diagnostics.
     An overflow stops the child and cannot be mistaken for compiler success.
     """
-    result = run_process(ProcessSpec(
+    result = _run_captured(ProcessSpec(
         argv=tuple(argv), cwd=cwd or Path.cwd(), timeout_seconds=timeout,
         max_output_bytes=max_output_bytes, environment="inherited",
-    ))
+    ), env, interrupt_cleanup_seconds=TEARDOWN_SECONDS)
     return GuardedResult(
         returncode=result.returncode,
         stdout=result.stdout,
@@ -764,15 +763,21 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
     The child gets no stdin, a process group of its own, and the environment
     `spec.environment` names.
     """
+    return _run_captured(spec, _environment_for(spec))
+
+
+def _run_captured(
+    spec: ProcessSpec, env: dict[str, str] | None, *, interrupt_cleanup_seconds: float | None = None,
+) -> ProcessResult:
     started = time.monotonic()
-    child = _spawn(spec.argv, cwd=spec.cwd, env=_environment_for(spec))
+    child = _spawn(spec.argv, cwd=spec.cwd, env=env)
     capture = _Capture(spec.max_output_bytes)
     readers = capture.start(child)
     with tracked(child) as entry:
         entry.watch_output(readers)
         try:
             ending = _wait(entry, capture, started + spec.timeout_seconds)
-            timed_out = _wind_down(entry, capture, ending)
+            timed_out = _wind_down(entry, capture, ending, interrupt_cleanup_seconds=interrupt_cleanup_seconds)
         except BaseException:
             _abandon(child)
             raise
@@ -809,7 +814,9 @@ class _Ending(Enum):
     TIMED_OUT = "the deadline passed with no stop asked"
 
 
-def _wind_down(entry: _Running, capture: _Capture, ending: _Ending) -> bool:
+def _wind_down(
+    entry: _Running, capture: _Capture, ending: _Ending, *, interrupt_cleanup_seconds: float | None = None,
+) -> bool:
     """Record how the wait ended, sweep the group unless the run finished, and reap the leader.
 
     Returns whether it timed out; a run a stop ended is recorded on `entry`.
@@ -824,11 +831,21 @@ def _wind_down(entry: _Running, capture: _Capture, ending: _Ending) -> bool:
         if not entry.escalated.is_set():
             # Reaping the leader alone says nothing about descendants
             # which ignored SIGTERM. Follow through for the whole tree.
-            time.sleep(_SWEEP_GRACE_SECONDS)
+            if ending is _Ending.STOPPED and interrupt_cleanup_seconds is not None:
+                _finish_interrupted_cleanup(entry, interrupt_cleanup_seconds)
+            else:
+                time.sleep(_SWEEP_GRACE_SECONDS)
         kill_group(child)
     with contextlib.suppress(subprocess.TimeoutExpired):
         child.wait(timeout=TEARDOWN_SECONDS)
     return timed_out
+
+
+def _finish_interrupted_cleanup(entry: _Running, seconds: float) -> None:
+    """Let guarded SIGTERM cleanup settle, bounded and cut short by a second press."""
+    deadline = time.monotonic() + seconds
+    while entry.working() and not entry.escalated.is_set() and time.monotonic() < deadline:
+        time.sleep(_POLL_SECONDS)
 
 
 def _wait(entry: _Running, capture: _Capture, deadline: float) -> _Ending:

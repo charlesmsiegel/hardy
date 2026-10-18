@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -463,6 +465,21 @@ def test_a_release_bumps_every_shard_and_binds_the_digest_it_produced(tmp_path):
     assert bound == manifest_digest(tmp_path), "the digest is taken after the bump, not before"
     assert "added `b`" in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## 0.1.0" in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8"), "history is kept"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not expose POSIX file permissions")
+def test_a_release_preserves_existing_shard_and_changelog_permissions(tmp_path):
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    _write(tmp_path, "20", [_entry(id="b", name="B", msc=["20Dxx"])])
+    _registry(tmp_path, {"a": "2026-09-03", "b": "2026-09-03"})
+    _changelog(tmp_path)
+    modes = {"problems/13.json": 0o644, "problems/20.json": 0o640, "CHANGELOG.md": 0o664}
+    for name, mode in modes.items():
+        (tmp_path / name).chmod(mode)
+
+    assert release(tmp_path, "0.2.0", ["updated"], today="2026-09-04") == []
+
+    assert {name: stat.S_IMODE((tmp_path / name).stat().st_mode) for name in modes} == modes
 
 
 def test_a_release_refuses_a_version_that_does_not_follow(tmp_path):
