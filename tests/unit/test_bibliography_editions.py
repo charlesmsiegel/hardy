@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -11,9 +12,13 @@ from hardy.literature.bibliography import (
     Bibliography,
     BibliographyError,
     Entry,
+    Store,
+    cite_key,
     edition_cite_key,
     edition_identities,
 )
+from hardy.literature.metadata import PaperRecord, digest
+from hardy.literature.sources.arxiv_adapter import catalog_records
 from hardy.literature.sources.contracts import BibliographicWork, EditionOrVersion, WorkKind
 
 PDF = "a" * 64
@@ -122,6 +127,69 @@ def test_arxiv_and_edition_paths_share_entry_and_keep_first_key(tmp_path, editio
     assert set(second.read_artifacts) >= {PDF, EPUB}
     if not edition_first:
         assert SCAN in second.also_read and SCAN in second.read_artifacts
+
+
+def _perelman() -> PaperRecord:
+    record = PaperRecord(arxiv_id="math/0211159v1", title="The entropy formula for the Ricci flow and its geometric applications",
+                         authors=("Grigori Perelman",), abstract="x", published="2002-11-11T18:00:00Z")
+    return record.model_copy(update={"content_sha256": digest(record.content())})
+
+
+def test_one_arxiv_paper_gets_one_key_whichever_path_cites_it(tmp_path: Path):
+    """The stable-key promise, across the two façades over one admission.
+
+    `cite` minted from the arXiv identity and `cite_edition` from the catalog
+    identity, so the same paper cited first through the managed library in one
+    workspace and through `cite_paper` in another carried two keys -- and a
+    `\\cite` copied between the two documents stopped resolving.
+    """
+    record = _perelman()
+    work, edition = catalog_records(record)
+    by_paper, _ = Bibliography(tmp_path / "paper").cite(record)
+    by_edition, _ = Bibliography(tmp_path / "edition").cite_edition(work, edition, read_artifacts=(record.content_sha256,))
+    assert by_paper.key == by_edition.key == cite_key(record) == edition_cite_key(work, edition)
+
+
+@pytest.mark.parametrize("path", ["cite", "cite_edition"])
+def test_a_stored_key_minted_under_the_catalog_identity_is_kept(tmp_path: Path, path: str):
+    """A key already in a store is never minted again, whatever rule minted it.
+
+    Before arXiv editions were keyed by their arXiv identity, `cite_edition`
+    keyed one by its catalog identity. A store written then must read back,
+    and be cited again through either path, under the key it holds.
+    """
+    record = _perelman()
+    work, edition = catalog_records(record)
+    stem = cite_key(record).rsplit("-", 1)[0]
+    stored = f"{stem}-{hashlib.sha256(f'edition:{edition.id}'.encode()).hexdigest()[:10]}"
+    assert stored != cite_key(record)
+    entry = Entry(key=stored, identities=edition_identities(work, edition), title=work.title, authors=work.authors,
+                  year="2002", arxiv_id=str(record.identifier), content_sha256=EPUB, work=work.id, edition=edition.id,
+                  edition_label=edition.label, publisher=edition.venue, read_artifacts=(EPUB,))
+    (tmp_path / "bibliography.json").write_text(Store(entries=(entry,)).model_dump_json(indent=2) + "\n", encoding="utf-8")
+    bibliography = Bibliography(tmp_path)
+    assert [held.key for held in bibliography.entries()] == [stored]
+    if path == "cite":
+        again, added = bibliography.cite(record)
+    else:
+        again, added = bibliography.cite_edition(work, edition, read_artifacts=(PDF,))
+    assert not added and again.key == stored and len(bibliography.entries()) == 1
+
+
+def test_a_preprint_does_not_merge_into_a_published_edition_sharing_its_doi(tmp_path: Path):
+    """A DOI is an alias for discovery on both paths, never the identity read.
+
+    The journal edition and the arXiv preprint share a DOI and are different
+    texts; handing back the journal entry for the preprint would record bytes
+    the reader never saw under a description of a version they did not read.
+    """
+    journal = EditionOrVersion(id="edition-perelman-journal", work="work-perelman", label="Journal version", year="2003",
+                               identifiers=(("doi", "10.1/x"),))
+    work = BibliographicWork(id="work-perelman", kind=WorkKind.PAPER, title="The entropy formula", authors=("Grigori Perelman",))
+    bibliography = Bibliography(tmp_path)
+    published, _ = bibliography.cite_edition(work, journal, read_artifacts=(PDF,))
+    preprint, added = bibliography.cite(_perelman().model_copy(update={"doi": "10.1/x"}))
+    assert added and preprint.key != published.key and len(bibliography.entries()) == 2
 
 
 @pytest.mark.parametrize("alias", ["2401.12345", "not-an-arxiv-id"])
