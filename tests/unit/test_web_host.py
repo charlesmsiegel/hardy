@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import queue
 import threading
@@ -401,6 +402,38 @@ def test_a_command_that_replaces_the_config_is_what_the_next_open_uses(tmp_path:
         host.open_project(_sylow(tmp_path), chats.create_chat(tmp_path / "sylow", "Lean proof").id)
         assert opener.configs[-1].model == "other"
     finally:
+        host.stop()
+
+
+def test_a_composer_command_reports_itself_running_from_the_moment_it_is_admitted(tmp_path: Path) -> None:
+    """A command waiting on a card (`/model`, say) holds the session for as long
+    as a person takes to answer, and a page that only hears `state` when the
+    command ends never learns it is running -- so draws no Stop for it. The
+    turn path, the reopen and `run_exclusive` all announce themselves at
+    admission; this is the fourth and last."""
+    make_problem(tmp_path, "sylow")
+    release = threading.Event()
+
+    async def hold(ui, argument, state):
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        return state
+
+    host = WebHost(make_config(tmp_path), FakeOpener(tmp_path), lambda confirm, cfg: FakeSession(cfg.layout.problem),
+                   registry=[Command("hold", "wait for a person", hold)], projects=make_registry(tmp_path))
+    host.start()
+    try:
+        sub = host.subscribe()
+        assert host.submit("/hold")["kind"] == "command"
+        seen = _drain(sub, {"state"})
+        assert seen[-1]["command_running"] is True, "the state event at admission says a command runs"
+        assert not release.is_set(), "and it arrives while the command is still running"
+        assert "changed" not in [e["type"] for e in seen]
+        release.set()
+        seen = _drain(sub, {"changed"})
+        assert [e for e in seen if e["type"] == "state"][-1]["command_running"] is False
+    finally:
+        release.set()
         host.stop()
 
 

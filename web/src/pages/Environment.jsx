@@ -52,7 +52,7 @@ export default function Environment() {
     <div className="wb-page-body">
       <div className="wb-page-head">
         <span className="page-title">Environment</span>
-        <span className="wb-page-subtitle">what /env prints · nothing here is inferred</span>
+        <span className="wb-page-subtitle">what /doctor prints · nothing here is inferred</span>
         <button type="button" className="button" disabled={probing} onClick={reprobe}>
           {probing ? 'Probing...' : 'Re-probe'}
         </button>

@@ -100,7 +100,8 @@ export default function SessionProvider({children}) {
   // What the sidebar calls after a chat was made or renamed. Neither writes
   // through the session, so neither emits a `changed` the effect above would
   // see, and a rail still showing the old title would be wrong about the one
-  // thing it exists to say.
+  // thing it exists to say. These metadata writes also invalidate the client
+  // panel revision, so mounted Chat and palette readers reload their rows.
   //
   // The promise is returned, and it always resolves: "+ chat" waits for the
   // redraw before it tries to open what it made, so the new chat has a row for
@@ -110,7 +111,10 @@ export default function SessionProvider({children}) {
   const refreshProjects = useCallback(
     () =>
       get('/api/projects')
-        .then((projects) => dispatch({type: 'projects', projects}))
+        .then((projects) => {
+          dispatch({type: 'projects', projects});
+          dispatch({type: 'event', event: {type: 'changed'}});
+        })
         .catch((error) => failed(error)),
     [failed],
   );
@@ -120,6 +124,10 @@ export default function SessionProvider({children}) {
   // through `refreshProjects`.
   const setProjects = useCallback((projects) => dispatch({type: 'projects', projects}), []);
 
+  // A form can display its own request failure even when Chat is hidden.
+  // Return that error to this caller as well as retaining the transcript;
+  // admission refusals still belong to shared session state. An accepted
+  // HTTP request is not a claim that its command has finished successfully.
   const send = useCallback(async (text) => {
     const line = text.trim();
     if (!line) return;
@@ -142,6 +150,7 @@ export default function SessionProvider({children}) {
         dispatch({type: 'refused', message: error.message});
       } else {
         failed(error);
+        return {error: String(error?.message ?? error)};
       }
     }
   }, [failed]);
@@ -168,12 +177,14 @@ export default function SessionProvider({children}) {
   }, [failed]);
 
   const setDraft = useCallback((draft) => dispatch({type: 'draft', draft}), []);
+  // A reviewable draft, not a send: no request, echo or session mutation.
+  const compose = useCallback((text) => dispatch({type: 'compose', text}), []);
   // Enter on a line the session will not take, from the composer.
   const blocked = useCallback(() => dispatch({type: 'blocked'}), []);
 
   const value = useMemo(
-    () => ({...state, send, answer, cancel, setDraft, blocked, refreshProjects, setProjects}),
-    [state, send, answer, cancel, setDraft, blocked, refreshProjects, setProjects],
+    () => ({...state, send, answer, cancel, setDraft, compose, blocked, refreshProjects, setProjects}),
+    [state, send, answer, cancel, setDraft, compose, blocked, refreshProjects, setProjects],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

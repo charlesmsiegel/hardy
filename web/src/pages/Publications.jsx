@@ -66,7 +66,7 @@
 // value is not missing from a source that assigns one, this shipment's own
 // commands never assign one at all.
 
-import {useState} from 'react';
+import {useId, useState} from 'react';
 import Absent from '../components/Absent.jsx';
 import {ConfirmCard} from '../components/Cards.jsx';
 import Empty from '../components/Empty.jsx';
@@ -104,6 +104,8 @@ function familiesPresent(items) {
 }
 
 export default function Publications({arg}) {
+  const sourceId = useId();
+  const targetId = useId();
   const {revision, send, refusal} = useSession();
   const panel = usePanel('/api/publications', revision);
   const [familyFilter, setFamilyFilter] = useState('all');
@@ -244,6 +246,7 @@ export default function Publications({arg}) {
                       key="output"
                       type="text"
                       className="wb-publications__input"
+                      aria-label="bundle name"
                       value={outputName}
                       placeholder="bundle-name"
                       onChange={(event) => setOutputName(event.target.value)}
@@ -389,8 +392,9 @@ export default function Publications({arg}) {
                 {linkableSources.length ? (
                   <>
                     <div className="wb-publications__field">
-                      <span className="panel__note">source (illustrates/documents only)</span>
+                      <label htmlFor={sourceId} className="panel__note">source (illustrates/documents only)</label>
                       <select
+                        id={sourceId}
                         value={linkSourceId}
                         onChange={(event) => {
                           setLinkSourceId(event.target.value);
@@ -420,8 +424,8 @@ export default function Publications({arg}) {
                       ))}
                     </div>
                     <div className="wb-publications__field">
-                      <span className="panel__note">target (any other item)</span>
-                      <select value={linkTargetId} onChange={(event) => setLinkTargetId(event.target.value)}>
+                      <label htmlFor={targetId} className="panel__note">target (any other item)</label>
+                      <select id={targetId} value={linkTargetId} onChange={(event) => setLinkTargetId(event.target.value)}>
                         <option value="">pick a target...</option>
                         {items
                           .filter((item) => item.id !== linkSourceId)

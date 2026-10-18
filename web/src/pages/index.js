@@ -1,15 +1,16 @@
-// Which component draws which tab.
+// Which component draws which page.
 //
-// A lookup rather than a switch, because thirteen tabs arrive across three
-// tasks and a page that has not landed yet should draw its empty state rather
-// than break the build. A tab whose id is absent here is a tab whose page does
-// not exist, which is a different thing from a page with nothing in it -- so
-// the fallback says so in words rather than rendering a blank panel.
+// A lookup rather than a switch, because the route is whatever the hash says
+// and a page that is not registered here yet should be answered in words
+// rather than by a blank panel or a throw: `Shell.jsx` draws "unknown route"
+// for a route absent here, and `Sidebar.jsx` leaves out an entry whose page
+// is absent (Workflows, until it lands). A route with no page is a different
+// thing from a page with nothing in it.
 //
 // `chat` and `tree` are Task 13a: `Shell.jsx` treats both routes as the chat
-// surface (mounted once, shown full width, no dock aside) -- `tree` has no
-// tab of its own (`TabBar.jsx` lights the Chat tab for it too) and is
-// reached only through the transcript/tree toggle in Chat's own header.
+// surface (mounted once, shown full width, no dock aside) -- `tree` is
+// reached from its own sidebar entry and from the transcript/tree toggle in
+// Chat's own header.
 //
 // `jobs`, `library` and `ledger` (its graph half; the list half shipped in
 // `e074b9a`) are Task 13b. `files` (read-only; the editor is shipment 3) is
@@ -29,6 +30,7 @@ import Results from './Results.jsx';
 import Runs from './Runs.jsx';
 import Status from './Status.jsx';
 import Tree from './Tree.jsx';
+import Workflows from './Workflows.jsx';
 
 export const PAGES = {
   home: Home,
@@ -37,6 +39,7 @@ export const PAGES = {
   jobs: Jobs,
   library: Library,
   ledger: Ledger,
+  workflows: Workflows,
   results: Results,
   runs: Runs,
   publications: Publications,

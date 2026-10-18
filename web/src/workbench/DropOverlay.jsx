@@ -24,44 +24,7 @@
 // stage; only the digest, computed first, is unconditional.
 
 import {useCallback, useEffect, useRef, useState} from 'react';
-import {upload} from '../api.js';
-import {record} from './uploadScans.js';
-
-async function digestOf(file) {
-  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-//: The names bound by `theorem`/`lemma`/`def`/`axiom`, and whether `sorry`
-//: occurs anywhere in the text -- what the brief asks a dropped `.lean`
-//: file to be scanned for.
-function scanLean(text) {
-  const names = [...text.matchAll(/\b(?:theorem|lemma|def|axiom)\s+([A-Za-z_][A-Za-z0-9_'.]*)/g)].map(
-    (match) => match[1],
-  );
-  return {names, sorry: /\bsorry\b/.test(text)};
-}
-
-async function stageOne(file) {
-  const sha256 = await digestOf(file);
-  let scan = null;
-  if (file.name.toLowerCase().endsWith('.lean')) {
-    try {
-      scan = scanLean(await file.text());
-    } catch {
-      // Not valid UTF-8, say -- the file still stages, it just carries no
-      // scan; `Files.jsx` renders that as `Absent kind="unreported"`.
-      scan = null;
-    }
-  }
-  const staged = await upload(file);
-  record(staged.name, {sha256, scan});
-  // Announced per file, after the upload has landed. `pages/Files.jsx`
-  // listens for this to refetch `/api/uploads`: staging writes a file without
-  // touching the session, so no `changed` event follows it, and there is
-  // otherwise no signal that the staged list moved.
-  window.dispatchEvent(new CustomEvent('hardy:staged', {detail: {name: staged.name}}));
-}
+import {stageOne} from './stageUpload.js';
 
 export default function DropOverlay({go}) {
   const depth = useRef(0);

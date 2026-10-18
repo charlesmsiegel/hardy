@@ -265,6 +265,7 @@ export default function Editor({path, project, kind, text, sha256, missing = fal
       ) : (
         <textarea
           ref={area}
+          aria-label={`Edit ${path}`}
           className="wb-editor__area"
           spellCheck={false}
           value={buffer}

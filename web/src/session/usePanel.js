@@ -23,8 +23,10 @@ import {get} from '../api.js';
 // pill, and `pages/Jobs.jsx`, `pages/Home.jsx` and `pages/Chat.jsx` each read
 // it again for their own content. Without this, opening any of those three
 // routes fires two GETs for one answer, for no reason a page's own code would
-// ever show. Keyed on `path` alone; `revision` inside the cached entry is
-// what says whether it is still good for a caller arriving after it settled.
+// ever show. Keyed on `path` and an optional owner; `revision` inside the
+// cached entry says whether it is still good for a caller arriving after it
+// settled. An owner is needed for an unparameterized endpoint such as chats:
+// a project's response must not become another project's selectable choices.
 //
 // Bounded the same way `workbench/uploadScans.js` bounds its own shared map:
 // a cap only so a tab left open a long time, browsing many distinct
@@ -34,8 +36,13 @@ import {get} from '../api.js';
 const LIMIT = 200;
 const shared = new Map();
 
-function fetchShared(path, revision, force) {
-  const cached = shared.get(path);
+function cacheKey(path, owner) {
+  return owner === undefined ? path : JSON.stringify([owner, path]);
+}
+
+function fetchShared(path, revision, force, owner) {
+  const key = cacheKey(path, owner);
+  const cached = shared.get(key);
   if (!force && cached && cached.revision === revision) return cached.promise;
   const promise = get(path).catch((failure) => {
     // A rejected entry must not stick. Without this, a transient failure on
@@ -45,17 +52,19 @@ function fetchShared(path, revision, force) {
     // caller failed and retried independently. Only the entry this fetch
     // itself installed is removed, so a `reload()` that has already
     // replaced it in the meantime is left alone.
-    if (shared.get(path)?.promise === promise) shared.delete(path);
+    if (shared.get(key)?.promise === promise) shared.delete(key);
     throw failure;
   });
-  shared.set(path, {revision, promise});
+  shared.set(key, {revision, promise});
   if (shared.size > LIMIT) shared.delete(shared.keys().next().value);
   return promise;
 }
 
-export default function usePanel(path, revision) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
+export default function usePanel(path, revision, owner) {
+  // Keep a response's owner beside it. A new owner sees no prior data even
+  // during the render before effects run; the same owner's refresh retains
+  // its existing data until the new response is ready.
+  const [result, setResult] = useState({data: null, error: '', owner});
   // Bumped by `reload` for the changes the server does not announce: staging
   // an upload and discarding one write a file without touching the session, so
   // no `changed` event follows them.
@@ -73,15 +82,15 @@ export default function usePanel(path, revision) {
   // An explicit probe publishes under the canonical URL, so other consumers
   // and later mounts see the same answer. Stale scopes cannot republish it.
   const publish = useCallback((value) => {
-    if (!path || active.current?.path !== path || active.current?.revision !== revision) return false;
-    const cached = shared.get(path);
+    if (!path || active.current?.path !== path || active.current?.revision !== revision || active.current?.owner !== owner) return false;
+    const key = cacheKey(path, owner);
+    const cached = shared.get(key);
     if (cached && cached.revision !== revision) return false;
-    shared.set(path, {revision, promise: Promise.resolve(value)});
+    shared.set(key, {revision, promise: Promise.resolve(value)});
     if (shared.size > LIMIT) shared.delete(shared.keys().next().value);
-    setData(value);
-    setError('');
+    setResult({data: value, error: '', owner});
     return true;
-  }, [path, revision]);
+  }, [path, revision, owner]);
 
   useEffect(() => {
     // A null path is a panel that has nothing to ask for right now -- the
@@ -89,28 +98,35 @@ export default function usePanel(path, revision) {
     // endpoint answers 409 then. Nothing is fetched and nothing is claimed.
     if (!path) return undefined;
     let live = true;
-    const scope = {path, revision};
+    const scope = {path, revision, owner};
     active.current = scope;
     const isReload = fetchedNonce.current !== -1 && fetchedNonce.current !== nonce;
     fetchedNonce.current = nonce;
-    const request = fetchShared(path, revision, isReload);
+    const key = cacheKey(path, owner);
+    const request = fetchShared(path, revision, isReload, owner);
     request
       .then((value) => {
-        const cached = shared.get(path);
+        const cached = shared.get(key);
         if (!live || (cached && cached.promise !== request)) return;
-        setData(value);
-        setError('');
+        setResult({data: value, error: '', owner});
       })
       .catch((failure) => {
-        const cached = shared.get(path);
+        const cached = shared.get(key);
         if (!live || (cached && cached.promise !== request)) return;
-        setError(String(failure?.message ?? failure));
+        setResult((current) => ({
+          data: current.owner === owner ? current.data : null,
+          error: String(failure?.message ?? failure), owner,
+        }));
       });
     return () => {
       live = false;
       if (active.current === scope) active.current = null;
     };
-  }, [path, revision, nonce]);
+  }, [path, revision, nonce, owner]);
 
-  return {data, error, reload, publish};
+  return {
+    data: result.owner === owner ? result.data : null,
+    error: result.owner === owner ? result.error : '',
+    reload, publish,
+  };
 }

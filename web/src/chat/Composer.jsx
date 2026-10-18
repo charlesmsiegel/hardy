@@ -13,8 +13,11 @@
 // Typing `/mo` opens a list of the commands it could be, drawn from the same
 // registry the server dispatches against, so the suggestion is never a name
 // the server would then refuse as unknown.
+// A compose focus request stays pending if this box is hidden. Placement can
+// change without a remount (Tree to Chat), so a page change retries an
+// unfulfilled request; a fulfilled one never steals focus on later navigation.
 
-import {useEffect, useMemo, useRef, useState} from 'react';
+import {useEffect, useId, useMemo, useRef, useState} from 'react';
 
 /** The command a draft names, if it names one at all. */
 export function named(draft, commands) {
@@ -32,8 +35,10 @@ export function completions(draft, commands) {
   return commands.filter((command) => command.name.startsWith(prefix) && command.name !== prefix);
 }
 
-export default function Composer({draft, commands, busy, queued, refusal, runningTool, onDraft, onSend, onBlocked, onCancel}) {
+export default function Composer({draft, composeFocus = 0, page, commands, busy, queued, refusal, runningTool, onDraft, onSend, onBlocked, onCancel}) {
+  const id = useId();
   const box = useRef(null);
+  const focusedCompose = useRef(0);
   const command = useMemo(() => named(draft, commands), [draft, commands]);
   const matches = useMemo(() => completions(draft, commands), [draft, commands]);
   //: Which suggestion the arrows have moved to, reset whenever the list changes.
@@ -45,6 +50,12 @@ export default function Composer({draft, commands, busy, queued, refusal, runnin
   useEffect(() => {
     box.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (!composeFocus || focusedCompose.current === composeFocus) return;
+    box.current?.focus();
+    if (document.activeElement === box.current) focusedCompose.current = composeFocus;
+  }, [composeFocus, page]);
 
   useEffect(() => {
     setChosen(0);
@@ -134,7 +145,9 @@ export default function Composer({draft, commands, busy, queued, refusal, runnin
           typing, and telling a screen reader otherwise would be a lie about a
           control that works. What is refused is sending a command that cannot
           run now, and the reason is written beside it and pointed at from here. */}
+      <label className="field__label" htmlFor={`${id}-draft`}>Message or command</label>
       <textarea
+        id={`${id}-draft`}
         ref={box}
         className="composer__box"
         rows={3}

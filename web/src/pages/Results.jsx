@@ -34,10 +34,10 @@
 // silently flatten every one of these seven to the fallback `muted`.
 //
 // Left column sections with no backing endpoint (Task 1's own finding, not
-// a further guess by this page) are omitted with a note rather than drawn
-// as a column of `not reported`: *not reported* means the backend was asked
+// a further guess by this page) are omitted, with reasoning in source,
+// rather than drawn as a column of `not reported`: *not reported* means the backend was asked
 // and had no figure, which is a different claim from "nothing serves
-// this". See the comment above `OMITTED` below for exactly which four and
+// this". See the omission comments below for exactly which four and
 // why. `Standing assumptions`, `Naming registry` and `Failed attempts` come
 // from `/api/summary`'s own `sections` -- but that endpoint hands back each
 // section already reduced through `Section.shown` (`interactive/summary.py`),
@@ -77,12 +77,8 @@ import useSession from '../session/useSession.js';
 //  - Computer algebra export: `hardy.app.mcp.cas_export` is an MCP tool,
 //    not a web panel; no endpoint carries an export record's replay
 //    verdict.
-const OMITTED_NOTE =
-  'Reports, Imported files, Quarantined proposals and Computer algebra export are not drawn here: no endpoint in ' +
-  'this shipment carries a report’s own id/turn/claims (only the per-theorem quote above, already shown for ' +
-  'the selected theorem), a file’s import provenance, a quarantined proposal, or a computer-algebra export ' +
-  'record. Omitted, not drawn as a column of not reported — that would claim the backend was asked and had ' +
-  'nothing, when nothing asks at all.';
+// Omit those four surfaces instead of drawing a column of absences: no read
+// was made for them. The per-theorem report quote remains in its own lane.
 
 /** `module_path()`'s inverse in `formal/syntax.py`: `A.B.Foo` -> `lean/A/B/Foo.lean`. */
 function leanPathFor(module) {
@@ -326,8 +322,7 @@ export default function Results({arg, onPeek}) {
             </div>
           </div>
 
-          <div className="panel__note">{OMITTED_NOTE}</div>
-        </div>
+          </div>
 
         <div className="wb-results__right">
           {notFound ? (

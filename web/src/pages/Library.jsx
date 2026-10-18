@@ -110,7 +110,7 @@ export default function Library() {
         </div>
         <Empty
           title="Library is empty"
-          line="0 sources. Drop a PDF anywhere in the workbench to add one by digest; the edition will be asked."
+          line="0 sources. Drop a file anywhere or use Files › Upload…, then Add to library. The edition will be asked."
         />
         <Label>what will appear here</Label>
         <div className="panel__note">

@@ -1,7 +1,7 @@
-// One pill shape, one colour law. The backend hands a page a verdict word
-// (a kernel verdict, an obligation status, a file's state...); this is the
-// only place that turns that word into a colour, so the same word always
-// reads the same way no matter which page printed it.
+// Shared pill shape and separate tone laws for verdicts, session states,
+// delegation states and environment checks. Callers choose the map for their
+// own vocabulary; panels that supply an authoritative tone pass it directly.
+// A tone presents that source's claim and never upgrades its evidence.
 
 const TONE_CLASS = {
   accent: 'pill--accent',

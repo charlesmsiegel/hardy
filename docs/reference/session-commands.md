@@ -119,8 +119,9 @@ name; existing outputs are refused, including after restart. This exports an
 assessment snapshot with exact references, not a standalone Lean replay bundle
 or a claim that any supplied argument has been checked.
 
-The workbench's Ledger page provides equivalent target creation, side-by-side
-review, checked-save selection and report export controls. Browser mutations
+The workbench's Workflows page provides target creation and the project action
+forms; Ledger's `New…` menu opens the same forms. Ledger keeps side-by-side
+inspection, checked-save selection and selected-result report export. Browser mutations
 require the exact open project path, use the same session operations and refuse
 stale version submissions. Review starts unresolved; the operator records their
 name, actual conditions and reason. Current assessments and review history are
@@ -130,8 +131,13 @@ Commands can pin that same exact scope with `--scope`; omitting it preserves the
 legacy native-scope selection. A changed digest under the same scope ID rejects
 a captured exact review or binding.
 
-Research, Explore, Repair and manuscript intake/Referee share the workbench's
-structured session operations:
+Research, Explore, Repair and manuscript intake/Referee are on Workflows and
+share the workbench's structured session operations. Switching the selected
+form preserves drafts, pending requests and replies. Leaving Workflows drops
+the form's local reply without cancelling the run; its pending message names
+workflow history, the intake report, the Referee report or the ledger as the
+place to find its record. The top bar's Stop cancels the active operation.
+Switching project clears the old project's forms.
 
 ```text
 /project research RUN TARGET@FULL_SHA256 --scope SCOPE@FULL_SHA256 [--operation prove|refute|compute] [--context CONTEXT@FULL_SHA256] [--max-attempts N]
@@ -187,9 +193,14 @@ Nested exact references have `{id,digest}` fields. A source region adds
 producer, subject, artifact and digest. Catalog/status responses supply these
 owner-issued identities. Admission approval rechecks the exact reviewed latest
 gate and current source/scope inputs; later adverse gates withdraw earlier
-authority. Ledger shows target, proposed premise, source passage, affected scope
+authority. Workflows shows target, proposed premise, source passage, affected scope
 and actual review conditions before a decision, and disables approval while
 required gates are missing.
+
+Workflows' `Open an obligation` form submits the existing `obligation` operation
+with an exact subject and scope, a kind and a required reason. It opens work
+without granting evidence or acceptance; Ledger's `New…` menu and the palette
+link to the same form.
 
 The obligations work view includes open, investigating, blocked, resolved,
 dismissed and abandoned filters. Outstanding means the first three; the older
@@ -265,4 +276,39 @@ The expansion is what gets recorded, never the `/name`: a shared transcript that
 
 ## In the browser
 
-`hardy web` runs this same registry: every command above, the prompt shortcuts and a project's own commands work at the browser's composer exactly as at the prompt, and are refused while a turn or a command runs by the same rule; a plain message sent meanwhile is queued, and the composer says how many wait. Typing `/mo` lists the commands it could be, and Tab or Enter completes the one chosen. The Help panel lists every command in this page's tables, the prompt shortcuts, the project's own commands and the page's keys, read from the same registry; clicking a command puts it in the composer rather than sending it. The header carries a picker over the rows `/model` offers; choosing one submits `/model <identity>` like a typed line, so the switch is recorded and refused mid-turn exactly as the command is. A selector, a line prompt, or a yes/no question, including the request to approve an assumption, appears as a card in the conversation; Esc dismisses it, which is a decline. Esc against a running turn stops it, and a second Esc kills what has not stopped, as at the terminal. `/exit` does not stop the server: Ctrl+C where `hardy web` runs does.
+Help groups built-ins, prompt shortcuts and project commands. Its buttons compose
+the command prefix and focus Chat without sending. Home's labelled goal form
+submits `/goal <text>` explicitly; `Export session…` composes `/export ` for review.
+Tree's Abandon form requires a lesson and confirms the exact selected entry and
+command before sending. Changing the entry, chat or project clears that local
+lesson and confirmation.
+
+Files' `Upload…` button accepts multiple files and stages them through the same
+upload and refresh path as dropping files. Each failure is shown beside the
+button. The CAS notebook's State, Reset… and Export buttons compose `/cas state`,
+`/cas reset` and `/cas export`; Reset does not run until the command is submitted.
+
+Jobs offers Pause for queued work, Resume for paused work, and Cancel, Reinforce
+and Finish for nonterminal work. Reinforce takes a labelled positive integer
+(default 2) and confirms the exact amount and delegation before sending. Changing
+the amount, selection, state or project dismisses that confirmation. Finish
+composes `/jobs finish <id> ` for a synthesis; the server additionally requires an
+interior node. Pin composes `/jobs pin <id> ` for choosing a kind and any required
+value. Handle remains on actionable attention items. These controls retain the
+server's admission rules; no Unpin control guesses which pins exist.
+
+Chat's rail creates a conversation from `New chat title` and renames the current
+one with `Rename chat title`; `main` cannot be renamed. The labelled forms submit
+only when requested, show server refusals, and reset when the project or chat
+changes. The model picker's `Other…` field accepts a model identity and sends it
+with `Use model` or Enter; it waits while a turn, command or provider is busy.
+Catalog failures are shown beside both picker modes without replacing the
+server-reported model. Set goal refusals are shown beside Home's form even with
+the Chat dock hidden, and follow the shared session refusal's lifetime. Other
+goal request failures appear there as well as in Chat. That form feedback belongs
+to its submitted draft: editing, retrying or changing project/chat clears it;
+a late response cannot attach an old failure to a different draft or owner.
+
+Ctrl+K / ⌘K opens the page, chat, workflow-form and command palette from any field. Selecting a workflow form opens Workflows with that form selected; selecting a command fills and focuses the composer for review without sending, and opens Chat when its dock is hidden. Escape closes the palette and restores focus, and navigation or a project switch closes it.
+
+`hardy web` runs this same registry: every command above, the prompt shortcuts and a project's own commands work at the browser's composer exactly as at the prompt, and are refused while a turn or a command runs by the same rule; a plain message sent meanwhile is queued, and the composer says how many wait. Typing `/mo` lists the commands it could be, and Tab or Enter completes the one chosen. The Help panel lists every command in this page's tables, the prompt shortcuts, the project's own commands and the page's keys, read from the same registry; clicking a command puts it in the composer rather than sending it. The header carries a picker over the rows `/model` offers; choosing one submits `/model <identity>` like a typed line, so the switch is recorded and refused mid-turn exactly as the command is. A selector, a line prompt, or a yes/no question, including the request to approve an assumption, appears as a card in the conversation; Esc dismisses it, which is a decline. Esc against a running turn stops it, and a second Esc kills what has not stopped, as at the terminal. The top bar's Stop button, drawn while a turn or a command runs, does what Esc does against it, from any page and whether or not the composer has focus. One press asks the work to stop, as the first Esc does, and the button then reads `Stopping…` and ignores further presses, so a double click is one request and not a kill. It keeps keyboard focus and announces phase changes politely. If the work is still running three seconds later the button reads `Force stop`, and pressing that is the second Esc: it kills what had not stopped, at the cost of a computer algebra kernel's state. Esc itself is unchanged, and a Stop pressed after an Esc is that second press, because the page cannot know about the first. A count of cards waiting for an answer appears beside it and opens Chat, so an approval is not left in a dock that is hidden. `/exit` does not stop the server: Ctrl+C where `hardy web` runs does.
