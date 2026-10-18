@@ -329,46 +329,6 @@ def identities_of(record: PaperRecord) -> tuple[str, ...]:
     return tuple(names)
 
 
-def base_year(record: PaperRecord) -> str:
-    """The year to put in a key and in a reference list, or "".
-
-    Read from the submission dates only. An arXiv identifier looks like it
-    carries one -- `2401.12345` -- but `2401` is a year and a month glued
-    together, and a key reading `perelman2401entropy` names no year at all.
-    """
-    found = YEAR.search(record.published or record.updated or "")
-    return found.group(1) if found else ""
-
-
-def base_key(record: PaperRecord) -> str:
-    """The readable half of a key: author, year, first real title word.
-
-    Not a key on its own -- two papers can want the same one. `cite_key` adds
-    what makes it unique.
-    """
-    author = ""
-    if record.authors:
-        # The surname, for a name written either way round: "Grigori
-        # Perelman" and "Perelman, Grigori" are the same person and must not
-        # be two keys.
-        first = record.authors[0]
-        surname = first.split(",")[0] if "," in first else first.split()[-1]
-        author = "".join(WORD.findall(surname)).lower()
-    year = base_year(record)
-    word = ""
-    for candidate in WORD.findall(record.title.lower()):
-        if candidate not in STOPWORDS and len(candidate) > 2:
-            word = candidate
-            break
-    key = f"{author}{year}{word}" or record.arxiv_id
-    # Capped, because both halves come from arXiv. A surname or a first title
-    # word may legitimately be enormous, and an unbounded stem makes a
-    # `\bibitem` key past TeX's input-line capacity -- a citation recorded and
-    # then unable to compile. The digest `cite_key` appends is what keeps it
-    # unique; this half only has to be readable.
-    return SAFE_KEY.sub("", key)[:STEM_CHARACTERS] or "ref"
-
-
 def edition_identities(work: BibliographicWork, edition: EditionOrVersion) -> tuple[str, ...]:
     """Every name an edition answers to, with the catalog identity first.
 
@@ -385,9 +345,13 @@ def edition_identities(work: BibliographicWork, edition: EditionOrVersion) -> tu
     return tuple(dict.fromkeys(names))
 
 
-
 def _exact_identity(name: str) -> str | None:
-    """A catalog identity or canonical, versioned arXiv identity; other aliases are discovery only."""
+    """`name` in canonical form when it settles which edition was read, else None.
+
+    A catalog identity names one edition and a versioned arXiv identity one
+    version, so either settles a match. A DOI, an ISBN or a bare arXiv stem
+    is shared by things a reader can tell apart and is only an alias.
+    """
     if name.startswith("edition:"):
         return name
     if name.startswith("arxiv:"):
@@ -400,29 +364,71 @@ def _exact_identity(name: str) -> str | None:
     return None
 
 
-def edition_base_key(work: BibliographicWork, edition: EditionOrVersion) -> str:
-    """Author, year and first real title word of an edition, capped like `base_key`."""
+def citation_identity(names: tuple[str, ...]) -> str:
+    """The one identity a citation is about, and the one its key digests.
+
+    An exact arXiv version wins wherever it is cited from -- `cite` with a
+    record or `cite_edition` with an edition that carries it -- so one paper
+    has one key on both paths. A catalog edition otherwise, and the first
+    name when nothing is exact.
+    """
+    exact = [identity for name in names if (identity := _exact_identity(name)) is not None]
+    arxiv = [identity for identity in exact if identity.startswith("arxiv:")]
+    return (arxiv or exact or list(names))[0]
+
+
+def _year(text: str) -> str:
+    found = YEAR.search(text)
+    return found.group(1) if found else ""
+
+
+def base_year(record: PaperRecord) -> str:
+    """The year to put in a key and in a reference list, or "".
+
+    Read from the submission dates only. An arXiv identifier looks like it
+    carries one -- `2401.12345` -- but `2401` is a year and a month glued
+    together, and a key reading `perelman2401entropy` names no year at all.
+    """
+    return _year(record.published or record.updated or "")
+
+
+def _stem(authors: tuple[str, ...], year: str, title: str, fallback: str) -> str:
+    """Author, year and first real title word: the readable half of a key."""
     author = ""
-    if work.authors:
-        first = work.authors[0]
+    if authors:
+        # The surname, for a name written either way round: "Grigori
+        # Perelman" and "Perelman, Grigori" are the same person and must not
+        # be two keys.
+        first = authors[0]
         surname = first.split(",")[0] if "," in first else first.split()[-1]
         author = "".join(WORD.findall(surname)).lower()
-    year = ""
-    if edition.year:
-        found = YEAR.search(edition.year)
-        year = found.group(1) if found else ""
-    word = ""
-    for candidate in WORD.findall(work.title.lower()):
-        if candidate not in STOPWORDS and len(candidate) > 2:
-            word = candidate
-            break
-    key = f"{author}{year}{word}" or edition.id
+    word = next((each for each in WORD.findall(title.lower()) if each not in STOPWORDS and len(each) > 2), "")
+    key = f"{author}{year}{word}" or fallback
+    # Capped, because every part comes from third-party metadata. A surname or
+    # a first title word may legitimately be enormous, and an unbounded stem
+    # makes a `\bibitem` key past TeX's input-line capacity -- a citation
+    # recorded and then unable to compile. The digest the key appends is what
+    # keeps it unique; this half only has to be readable.
     return SAFE_KEY.sub("", key)[:STEM_CHARACTERS] or "ref"
 
 
-def edition_cite_key(work: BibliographicWork, edition: EditionOrVersion) -> str:
-    """A pure function of the edition: readable stem plus a digest of its exact identity."""
-    return f"{edition_base_key(work, edition)}-{hashlib.sha256(edition_identities(work, edition)[0].encode()).hexdigest()[:10]}"
+def _keyed(stem: str, identity: str) -> str:
+    return f"{stem}-{hashlib.sha256(identity.encode()).hexdigest()[:10]}"
+
+
+def base_key(record: PaperRecord) -> str:
+    """The readable half of a paper's key.
+
+    Not a key on its own -- two papers can want the same one. `cite_key` adds
+    what makes it unique.
+    """
+    return _stem(record.authors, base_year(record), record.title, record.arxiv_id)
+
+
+def edition_base_key(work: BibliographicWork, edition: EditionOrVersion) -> str:
+    """The readable half of an edition's key, from the same parts as `base_key`."""
+    identity = citation_identity(edition_identities(work, edition))
+    return _stem(work.authors, _year(edition.year or ""), work.title, identity.partition(":")[2])
 
 
 def cite_key(record: PaperRecord) -> str:
@@ -433,9 +439,119 @@ def cite_key(record: PaperRecord) -> str:
     characters over a versioned arXiv identifier makes two papers colliding on
     author, year, title word AND digest something that will not happen, and if
     it ever did the store would hold two entries wanting one key -- which
-    `_assign` still notices and refuses rather than quietly conflating.
+    `_admit` still notices and refuses rather than quietly conflating.
     """
-    return f"{base_key(record)}-{hashlib.sha256(identities_of(record)[0].encode()).hexdigest()[:10]}"
+    return _keyed(base_key(record), citation_identity(identities_of(record)))
+
+
+def edition_cite_key(work: BibliographicWork, edition: EditionOrVersion) -> str:
+    """The cite key for this edition: `cite_key`'s rule over the edition's identity.
+
+    An arXiv edition therefore gets exactly the key `cite_key` gives the
+    paper; any other edition is keyed by its catalog identity.
+    """
+    return _keyed(edition_base_key(work, edition), citation_identity(edition_identities(work, edition)))
+
+
+#: The fields that tie an entry to the personal library's catalog. A paper
+#: cited through `cite` has none of them; a later `cite_edition` of the same
+#: version fills in whichever the entry still lacks.
+CATALOG_FIELDS = ("work", "edition", "edition_label", "publisher", "isbn")
+
+
+@dataclass(frozen=True)
+class CitationRequest:
+    """One request to cite: what was read, and what a new entry for it says.
+
+    `cite` builds one from an arXiv record and `cite_edition` from a catalog
+    edition. Everything after that -- which entry it already is, what a held
+    entry learns from it, which key a new one gets -- is decided in one place,
+    so the two paths cannot disagree about a paper.
+    """
+
+    key: str
+    #: Every name the cited thing answers to, preferred first.
+    identities: tuple[str, ...]
+    #: Digests read this time, the one a new entry is made against first.
+    reads: tuple[str, ...]
+    #: `Entry` fields describing the cited thing, for a new entry.
+    description: Mapping[str, object]
+    spans: tuple[str, ...] = ()
+
+    @classmethod
+    def of_paper(cls, record: PaperRecord) -> CitationRequest:
+        """`cite_paper`'s request: one arXiv version, read as `record`."""
+        return cls(
+            key=cite_key(record),
+            identities=identities_of(record),
+            reads=(record.content_sha256,),
+            description={
+                "title": record.title, "authors": record.authors, "year": base_year(record),
+                "arxiv_id": record.arxiv_id, "doi": record.doi, "journal_ref": record.journal_ref,
+                "url": record.abs_url,
+            },
+        )
+
+    @classmethod
+    def of_edition(
+        cls, work: BibliographicWork, edition: EditionOrVersion, read_artifacts: tuple[str, ...],
+        spans: tuple[str, ...],
+    ) -> CitationRequest:
+        """An edition in the personal library, read through exact artifacts."""
+        identifiers = dict(edition.identifiers)
+        return cls(
+            key=edition_cite_key(work, edition),
+            identities=edition_identities(work, edition),
+            reads=read_artifacts,
+            spans=spans,
+            description={
+                "title": work.title, "authors": work.authors or ("Unknown",), "year": _year(edition.year or ""),
+                "arxiv_id": identifiers.get("arxiv"), "doi": identifiers.get("doi"), "work": work.id,
+                "edition": edition.id, "edition_label": edition.label, "publisher": edition.venue,
+                "isbn": identifiers.get("isbn"),
+            },
+        )
+
+    def merged_into(self, held: Entry) -> Entry:
+        """`held`, having learned this citation's names, reads and catalog fields.
+
+        Its key never changes -- some already-compiled `\\cite` may depend on
+        it -- and neither does the digest it was first made against. A
+        different digest is the same paper read again and found different: a
+        clone refetching what its library no longer holds, after arXiv's
+        metadata or this parser moved. Neither read is false, so both are
+        kept, in the order they were read. Rebuilt through validation, not
+        `model_copy`, so a merged value the validators would refuse never
+        reaches the store when a new entry carrying it would have been refused.
+        """
+        later = tuple(
+            digest for digest in dict.fromkeys((*held.also_read, *held.read_artifacts, *self.reads))
+            if digest and digest != held.content_sha256
+        )
+        catalog = {name: getattr(held, name) or self.description.get(name) for name in CATALOG_FIELDS}
+        return Entry.model_validate({
+            **held.model_dump(),
+            **catalog,
+            "identities": tuple(dict.fromkeys((*held.identities, *self.identities))),
+            "also_read": later,
+            "read_artifacts": (held.content_sha256, *later) if catalog["edition"] else held.read_artifacts,
+            "cited_spans": tuple(dict.fromkeys((*held.cited_spans, *self.spans))),
+        })
+
+    def minted(self, now: datetime | None) -> Entry:
+        """The new entry for a citation nothing in the store already is."""
+        content, *rest = self.reads
+        later = tuple(digest for digest in dict.fromkeys(rest) if digest != content)
+        return Entry.model_validate({
+            **self.description,
+            "key": self.key,
+            "identities": self.identities,
+            "content_sha256": content,
+            "also_read": later,
+            "read_artifacts": (content, *later) if self.description.get("edition") else (),
+            "cited_spans": tuple(dict.fromkeys(self.spans)),
+            "cited_at": (now or datetime.now(UTC)).isoformat(timespec="seconds"),
+        })
 
 
 class Bibliography:
@@ -508,9 +624,11 @@ class Bibliography:
             ) from error
 
     def entries(self) -> tuple[Entry, ...]:
+        """Every entry the store holds, in the order they were first cited."""
         return self.read().entries
 
     def find(self, identity: str) -> Entry | None:
+        """The entry answering to `identity` under any of its names, or None."""
         wanted = identity.strip().lower()
         for entry in self.entries():
             if any(name.lower() == wanted for name in entry.identities):
@@ -518,93 +636,26 @@ class Bibliography:
         return None
 
     def cite(self, record: PaperRecord, *, now: datetime | None = None) -> tuple[Entry, bool]:
-        """Record `record` and return its entry, and whether it was new.
+        """Record an arXiv paper and return its entry, and whether it was new.
 
-        THE write path. Everything that puts a reference in front of a reader
-        goes through here: the store, the generated `references.tex`, the key
-        assignment, and the dedup are one operation, and there is no second
-        way to do any of them.
+        `cite_paper`'s path, and a façade over the same admission
+        `cite_edition` uses: the store, the generated `references.tex`, the
+        key, and the dedup are one operation, and there is no second way to
+        do any of them.
 
-        A paper already present under either of its identities comes back
-        unchanged rather than being rewritten -- including its key, which some
-        already-compiled `\\cite` may depend on -- but picks up whichever
+        A paper already present comes back with its key unchanged -- some
+        already-compiled `\\cite` may depend on it -- but picks up whichever
         identity it was missing, so a paper first met without a DOI and later
         reached by one stays a single entry.
         """
         with self._locked():
-            return self._cite(record, now)
-
-    def _cite(self, record: PaperRecord, now: datetime | None) -> tuple[Entry, bool]:
-        """`cite`'s body, run with the store's lock held.
-
-        Split out so the lock covers the whole sequence -- read, match,
-        assign a key, write both files -- rather than each half of it.
-        Reading afresh per call is what makes two sessions see each other's
-        entries; it is not what makes them converge, because between this
-        read and the write below another process can do the same and the
-        second write would drop the first citation.
-        """
-        store = self.read()
-        names = identities_of(record)
-        held = self._match(record, store)
-        if held is not None:
-            merged = tuple(dict.fromkeys((*held.identities, *names)))
-            # Same entry, different bytes. It happens to a clone carrying the
-            # bibliography but not the machine-local library: the paper is
-            # fetched again and arXiv's metadata, an intermediary, or this
-            # parser has moved since. Silently keeping the first digest would
-            # leave the entry identifying bytes the reader did not read, and
-            # refusing the citation would be wrong too -- neither read is
-            # false. Both are recorded, in the order they were read.
-            seen = tuple(
-                dict.fromkeys(
-                    (*(held.content_sha256,), *held.also_read, record.content_sha256)
-                )
-            ) if record.content_sha256 else (held.content_sha256, *held.also_read)
-            later = tuple(digest for digest in seen if digest and digest != held.content_sha256)
-            reads = tuple(dict.fromkeys((held.content_sha256, *held.read_artifacts, *later))) if held.edition else held.read_artifacts
-            updated = Entry.model_validate({**held.model_dump(), "identities": merged, "also_read": later, "read_artifacts": reads})
-            if updated == held:
-                # Nothing about the entry has changed, and the generated file
-                # is still rewritten. It is derived state that a clone, a
-                # merge, or a hand edit can leave missing or wrong, and there
-                # may be no new paper to cite merely to bring it back; a
-                # citation that reports success has to leave the reference
-                # list correct.
-                self._write(store)
-                return held, False
-            self._write(
-                store.model_copy(
-                    update={
-                        "entries": tuple(
-                            updated if entry.key == held.key else entry for entry in store.entries
-                        )
-                    }
-                )
-            )
-            return updated, False
-        stamp = (now or datetime.now(UTC)).isoformat(timespec="seconds")
-        entry = Entry(
-            key=self._assign(record, store),
-            identities=names,
-            title=record.title,
-            authors=record.authors,
-            year=base_year(record),
-            arxiv_id=record.arxiv_id,
-            doi=record.doi,
-            journal_ref=record.journal_ref,
-            url=record.abs_url,
-            content_sha256=record.content_sha256,
-            cited_at=stamp,
-        )
-        self._write(store.model_copy(update={"entries": (*store.entries, entry)}))
-        return entry, True
+            return self._admit(CitationRequest.of_paper(record), now)
 
     def cite_edition(
         self, work: BibliographicWork, edition: EditionOrVersion, *, read_artifacts: tuple[str, ...],
         spans: tuple[str, ...] = (), now: datetime | None = None,
     ) -> tuple[Entry, bool]:
-        """Record an edition read through exact artifacts; the same controlled path as `cite`.
+        """Record an edition read through exact artifacts; the same admission as `cite`.
 
         An edition already present under its catalog or exact arXiv identity comes back with
         its key unchanged and any newly read artifact digests and spans added.
@@ -619,57 +670,37 @@ class Bibliography:
             if not DIGEST.fullmatch(digest):
                 raise BibliographyError(f"read_artifacts must hold sha256 digests; got {digest[:80]!r}")
         with self._locked():
-            return self._cite_edition(work, edition, read_artifacts, spans, now)
+            return self._admit(CitationRequest.of_edition(work, edition, read_artifacts, spans), now)
 
-    def _cite_edition(
-        self, work: BibliographicWork, edition: EditionOrVersion, read_artifacts: tuple[str, ...],
-        spans: tuple[str, ...], now: datetime | None,
-    ) -> tuple[Entry, bool]:
+    def _admit(self, request: CitationRequest, now: datetime | None) -> tuple[Entry, bool]:
+        """Every citation's body, run with the store's lock held.
+
+        The lock covers the whole sequence -- read, match, merge or mint,
+        write both files -- rather than each half of it. Reading afresh per
+        call is what makes two sessions see each other's entries; it is not
+        what makes them converge, because between this read and the write
+        below another process can do the same and the second write would drop
+        the first citation.
+        """
         store = self.read()
-        names = edition_identities(work, edition)
-        exact = {identity for name in names if (identity := _exact_identity(name)) is not None}
-        matches = [entry for entry in store.entries
-                   if any(_exact_identity(name) in exact for name in entry.identities)]
-        if len(matches) > 1:
-            keys = ", ".join(entry.key for entry in matches)
-            raise BibliographyError(f"exact identities match several bibliography entries ({keys}); reconcile their identities before citing")
-        held = matches[0] if matches else None
-        if held is not None:
-            merged_reads = tuple(dict.fromkeys((held.content_sha256, *held.also_read, *held.read_artifacts, *read_artifacts)))
-            merged_spans = tuple(dict.fromkeys((*held.cited_spans, *spans)))
-            merged_names = tuple(dict.fromkeys((*held.identities, *names)))
-            later = tuple(d for d in merged_reads if d != held.content_sha256)
-            # Rebuilt through validation, not `model_copy`: a merged value that
-            # the validators would refuse must not reach the store on this path
-            # when the new-entry path would have refused it.
-            updated = Entry.model_validate({**held.model_dump(), "identities": merged_names, "read_artifacts": merged_reads,
-                                            "also_read": later, "cited_spans": merged_spans,
-                                            "work": held.work or work.id, "edition": held.edition or edition.id,
-                                            "edition_label": held.edition_label or edition.label,
-                                            "publisher": held.publisher or edition.venue,
-                                            "isbn": held.isbn or dict(edition.identifiers).get("isbn")})
-            if updated == held:
-                self._write(store)
-                return held, False
-            self._write(store.model_copy(update={"entries": tuple(updated if e.key == held.key else e for e in store.entries)}))
-            return updated, False
-        wanted = edition_cite_key(work, edition)
-        for entry in store.entries:
-            if entry.key == wanted:
-                raise BibliographyError(f"edition {edition.id} wants the cite key {wanted}, which already belongs to {entry.identities[0]}")
-        identifiers = dict(edition.identifiers)
-        stamp = (now or datetime.now(UTC)).isoformat(timespec="seconds")
-        found_year = YEAR.search(edition.year) if edition.year else None
-        entry = Entry(
-            key=wanted, identities=names, title=work.title, authors=work.authors or ("Unknown",),
-            year=found_year.group(1) if found_year else "",
-            arxiv_id=identifiers.get("arxiv"), doi=identifiers.get("doi"),
-            content_sha256=read_artifacts[0], also_read=tuple(dict.fromkeys(read_artifacts[1:])), cited_at=stamp,
-            work=work.id, edition=edition.id, edition_label=edition.label, publisher=edition.venue, isbn=identifiers.get("isbn"),
-            read_artifacts=tuple(dict.fromkeys(read_artifacts)), cited_spans=tuple(dict.fromkeys(spans)),
-        )
-        self._write(store.model_copy(update={"entries": (*store.entries, entry)}))
-        return entry, True
+        held = _held(store, request.identities)
+        if held is None:
+            entry = request.minted(now)
+            _refuse_taken_key(store, entry)
+            self._write(store.model_copy(update={"entries": (*store.entries, entry)}))
+            return entry, True
+        updated = request.merged_into(held)
+        if updated != held:
+            store = store.model_copy(
+                update={"entries": tuple(updated if entry.key == held.key else entry for entry in store.entries)}
+            )
+        # Written even when nothing about the entry changed. The generated
+        # file is derived state that a clone, a merge, or a hand edit can
+        # leave missing or wrong, and there may be no new paper to cite merely
+        # to bring it back; a citation that reports success has to leave the
+        # reference list correct.
+        self._write(store)
+        return updated, False
 
     def render(self, store: Store | None = None) -> str:
         r"""The `thebibliography` environment for everything cited so far."""
@@ -728,57 +759,6 @@ class Bibliography:
                 GENERATED, self.render().encode("utf-8")
             )
         return True
-
-    def _match(self, record: PaperRecord, store: Store) -> Entry | None:
-        """The entry this record already is, or None.
-
-        The arXiv identity settles it outright: it names one version, and a
-        version is what a citation has to be about.
-
-        A DOI does not, and treating it as though it did was wrong in a way
-        that quietly falsified the record. Two versions of one preprint
-        usually carry the same DOI, so citing v1 and then v2 found v1's entry
-        through the DOI and merely added `arxiv:...v2` to its identities --
-        handing back a cite key whose entry still described v1, with v1's
-        digest, for a paper the reader had read at v2. So a DOI match is
-        accepted only when it cannot be about a different version: when
-        neither side names an arXiv paper, or when both name the same one.
-        """
-        for entry in store.entries:
-            if f"arxiv:{record.arxiv_id}".lower() in {name.lower() for name in entry.identities}:
-                return entry
-        if not record.doi:
-            return None
-        doi = f"doi:{record.doi.strip().lower()}"
-        for entry in store.entries:
-            if doi not in {name.lower() for name in entry.identities}:
-                continue
-            if entry.arxiv_id in (None, record.arxiv_id):
-                return entry
-        # A DOI shared with a different version. Deliberately not a match, and
-        # deliberately not an error either: it is a second entry, for the
-        # second version, which is what a reader who read the second version
-        # is owed.
-        return None
-
-    def _assign(self, record: PaperRecord, store: Store) -> str:
-        """This paper's key, having checked nothing else already holds it.
-
-        The key itself owes nothing to the store -- that is the point of
-        `cite_key` -- so this is a consistency check rather than an
-        allocation: an entry already holding it would be a second paper
-        colliding on author, year, title word and a ten-hex digest at once.
-        Refused rather than conflated, because a citation quietly pointing at
-        somebody else's paper is the failure this whole module is against.
-        """
-        wanted = cite_key(record)
-        for entry in store.entries:
-            if entry.key == wanted:
-                raise BibliographyError(
-                    f"{record.arxiv_id} wants the cite key {wanted}, which already belongs "
-                    f"to {entry.arxiv_id or entry.identities[0]}"
-                )
-        return wanted
 
     def _write(self, store: Store) -> None:
         """Store and generated file, or neither.
