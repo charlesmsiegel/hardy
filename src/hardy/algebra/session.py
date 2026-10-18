@@ -33,6 +33,7 @@ from hardy.algebra.exchange import CellExchange
 from hardy.algebra.journal import CellJournal
 from hardy.algebra.kernel import Kernel
 from hardy.foundation.files import LayoutError
+from hardy.prompts import render
 from hardy.workflows.contracts import RunLimits
 
 
@@ -113,23 +114,8 @@ class _Judgement:
     notes: tuple[str, ...]
 
 
-_PERTURBED_NOTE = (
-    "[this cell was interrupted but reported success anyway, so it "
-    "ran under a signal it may have caught. It is recorded, and its "
-    "output is what it produced, but it was not accepted into the "
-    "state replay and export rebuild from: without the interrupt it "
-    "may not take the same path. Rerun it if you mean to build on it.]"
-)
-_CLIPPED_NOTE = (
-    "[output exceeded cas_output_bytes, so this cell was classified "
-    "from a prefix and an error banner could be in the discarded "
-    "tail. It ran, and its output is recorded, but it was not "
-    "accepted into the state replay and export rebuild from. It did "
-    "change the live namespace, and that change is now outside the "
-    "accepted set: any later cell that depends on it will diverge on "
-    "export and after a kernel restart. Rerun it printing less, or "
-    "raise cas_output_bytes and rerun it, before building on it.]"
-)
+_PERTURBED_NOTE = render("cas_perturbed_note")
+_CLIPPED_NOTE = render("cas_clipped_note")
 # A second press does not wait to see whether the kernel answers -- and it may
 # have: unrun, or even `ok` if the press raced a cell that had just finished.
 # Saying it "did not answer" would contradict the record it sits in.
