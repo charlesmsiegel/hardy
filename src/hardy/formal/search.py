@@ -182,6 +182,7 @@ class SearchToolRuntime:
         return self._answer(lambda: search_result(self.declarations, query, limit))
 
     def inspect_declarations(self, names: list[str]) -> ToolResult:
+        """Render exact declaration inspection without disguising an incomplete request."""
         # Refused, not truncated. `DeclarationInspection` carries no marker for
         # names that were never looked at, so silently dropping the tail hands
         # back a successful result in which "not found" and "not asked" are

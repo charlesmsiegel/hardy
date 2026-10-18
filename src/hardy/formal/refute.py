@@ -26,7 +26,6 @@ request and send a model looking for a fault that is not there.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from hardy.formal.lean import SCRATCH_BODY_LINE, scratch_source
 from hardy.formal.syntax import normalise_lean
@@ -104,7 +103,7 @@ def probe_source(
     return (scratch_source(body) if imported else body), tactics
 
 
-def judge(result: Any, tactics: tuple[str, ...] = TACTICS) -> Verdict:
+def judge(result: object, tactics: tuple[str, ...] = TACTICS) -> Verdict:
     """Read one probe elaboration, fail-safe in the direction of not refuting.
 
     Takes the result rather than the raw diagnostics because three of the five
@@ -144,7 +143,7 @@ def judge(result: Any, tactics: tuple[str, ...] = TACTICS) -> Verdict:
     return Verdict(False)
 
 
-def _reading(result: Any) -> tuple[bool, bool]:
+def _reading(result: object) -> tuple[bool, bool]:
     """Whether the elaboration succeeded, and whether it never finished.
 
     Two result shapes reach here: `LeanToolResult`, which the interactive

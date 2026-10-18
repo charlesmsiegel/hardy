@@ -216,12 +216,15 @@ DECLARATION_KEYWORD = re.compile(rf"^{ATTRIBUTES}{MODIFIERS}(?:theorem|lemma|exa
 
 @dataclass(frozen=True)
 class Request:
+    """A statement-only Lean declaration and the informal claim it should express."""
+
     declaration: str
     informal_claim: str
     imports: tuple[str, ...] = DEFAULT_IMPORTS
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Request:
+        """Read a batch request, refusing proof bodies and malformed declaration heads."""
         declaration = str(value["declaration"]).strip()
         if ":=" in declaration:
             raise ValueError("declaration must contain the statement only, not ':='")

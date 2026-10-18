@@ -22,6 +22,8 @@ def _count(value: int) -> None:
 
 
 class CheckBudget:
+    """Shared check admission under both active-time and proof-time ceilings."""
+
     def __init__(
         self, *, official_checks: int, active_seconds: float, proof_seconds: float,
         active_elapsed: Callable[[], float] = lambda: 0,
