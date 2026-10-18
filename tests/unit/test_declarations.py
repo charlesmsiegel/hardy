@@ -386,7 +386,7 @@ def test_a_newline_between_the_keyword_and_the_name_still_declares(tmp_path) -> 
 
 def test_a_declaration_behind_a_same_line_command_wrapper_is_still_seen(tmp_path) -> None:
     """`set_option x y in theorem foo` is Lean's way of scoping one command,
-    and the workspace scanner already reads through it (`workspace.WRAPPER`)
+    and the declaration scanner reads through it (`syntax.scans.WRAPPER`)
     for the same reason it matters here: an unseen declaration is an index
     miss for a name the sources really ship."""
     root = _package(tmp_path)

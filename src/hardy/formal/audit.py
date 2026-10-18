@@ -63,9 +63,13 @@ class AxiomReport:
 
 @dataclass(frozen=True)
 class Verdict:
-    """A module's audit graded: which axioms are holes, unapproved or approved."""
+    """A module's audit graded: which axioms are holes, unapproved or approved.
 
-    status: AuditStatus
+    `classify` produces nominal statuses; the public constructor also retains
+    legacy callers' raw status words without imposing a new validation gate.
+    """
+
+    status: AuditStatus | str
     reports: tuple[AxiomReport, ...]
     forbidden: tuple[str, ...]
     unapproved: tuple[str, ...]
@@ -74,7 +78,7 @@ class Verdict:
     def as_dict(self) -> dict[str, Any]:
         """The stored record: what `summarise` and `open_declarations` read back."""
         return {
-            "status": self.status.value,
+            "status": self.status.value if isinstance(self.status, AuditStatus) else self.status,
             "declarations": [
                 {"name": item.declaration, "axioms": list(item.axioms)} for item in self.reports
             ],

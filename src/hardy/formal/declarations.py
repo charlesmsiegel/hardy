@@ -78,7 +78,7 @@ from hardy.formal.syntax.scopes import _prefix_at, _scopes
 # as the name. An approximation of Lean's grammar, like every scan in Hardy
 # that reads Lean as text, and documented as one where it is offered.
 _KEYWORD = r"theorem|lemma|abbrev|structure|class(?:\s+inductive)?|inductive|instance|opaque|axiom|def"
-# `workspace.WRAPPER` reads through `set_option x y in`, `open Foo in` and the
+# `syntax.scans.WRAPPER` reads through `set_option x y in`, `open Foo in` and the
 # rest of Lean's same-line command scoping, for the same reason it matters
 # there: a declaration behind one is a declaration the sources really ship.
 # Multiline (`(?m)`, matched over the whole blanked source) for the reason
