@@ -15,6 +15,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 from hardy.foundation.journal import Journal, JournalSnapshot
 from hardy.foundation.values import json_digest
@@ -34,6 +35,7 @@ from .contracts import (
 TYPES = {t.__name__: t for t in (BibliographicWork, EditionOrVersion, GroupingProposal, GroupingDecision)}
 IDENTIFIER_KINDS: dict[str, str] = {"isbn": "isbn", "doi": "doi", "arxiv": "arxiv_version"}
 WORD = re.compile(r"[a-z0-9]+")
+_CatalogHead = TypeVar("_CatalogHead", BibliographicWork, EditionOrVersion)
 
 
 class CatalogError(ValueError):
@@ -41,10 +43,12 @@ class CatalogError(ValueError):
 
 
 def strong_enough(evidence: Iterable[IdentityEvidence]) -> bool:
+    """Whether evidence includes an identifier accepted for authoritative grouping."""
     return any(item.kind in STRONG_EVIDENCE for item in evidence)
 
 
 def normalize_identifier(kind: str, value: str) -> str:
+    """Normalize matching spellings while retaining the version in an arXiv identity."""
     kind = kind.lower()
     value = value.strip()
     if kind == "isbn":
@@ -62,33 +66,43 @@ def _title_key(title: str) -> str:
 
 @dataclass(frozen=True)
 class CatalogSnapshot:
+    """Current metadata heads and the proposals and decisions at one journal revision."""
+
     journal: JournalSnapshot
 
     @property
     def revision(self) -> int:
+        """The concurrency token an append must name to build on this snapshot."""
         return self.journal.revision
 
     @property
     def works(self) -> tuple[BibliographicWork, ...]:
+        """The latest metadata record for each work, preserving first-admission order."""
         return tuple(_heads(self.journal.of(BibliographicWork)).values())
 
     @property
     def editions(self) -> tuple[EditionOrVersion, ...]:
+        """The latest metadata record for each edition, preserving first-admission order."""
         return tuple(_heads(self.journal.of(EditionOrVersion)).values())
 
     def work(self, id: str) -> BibliographicWork | None:
+        """The current head for an exact work id, without similarity matching."""
         return _heads(self.journal.of(BibliographicWork)).get(id)
 
     def edition(self, id: str) -> EditionOrVersion | None:
+        """The current head for an exact edition id, without inferring group membership."""
         return _heads(self.journal.of(EditionOrVersion)).get(id)
 
     def editions_of_work(self, work: str) -> tuple[EditionOrVersion, ...]:
+        """Edition heads explicitly attached to the named work."""
         return tuple(e for e in self.editions if e.work == work)
 
     def proposals(self) -> tuple[GroupingProposal, ...]:
+        """All proposed artifact-to-edition groupings, including decided candidates."""
         return self.journal.of(GroupingProposal)
 
     def decisions(self) -> tuple[GroupingDecision, ...]:
+        """The recorded decisions in journal order, including rejections."""
         return self.journal.of(GroupingDecision)
 
     def authoritative(self) -> dict[str, str]:
@@ -104,49 +118,60 @@ class CatalogSnapshot:
         return grouped
 
     def decided(self) -> set[str]:
+        """Proposal ids already consumed by a decision, regardless of its outcome."""
         return {d.proposal for d in self.decisions()}
 
 
-def _heads(records: Iterable) -> dict[str, object]:
-    heads: dict[str, object] = {}
+def _heads(records: Iterable[_CatalogHead]) -> dict[str, _CatalogHead]:
+    heads: dict[str, _CatalogHead] = {}
     for record in records:
         heads[record.id] = record
     return heads
 
 
 class Catalog:
+    """Append bibliographic identity decisions against an explicit journal revision."""
+
     def __init__(self, directory: Path) -> None:
         self._journal = Journal(Path(directory), types=TYPES)
 
     def snapshot(self) -> CatalogSnapshot:
+        """One verified journal view for metadata lookup and subsequent decisions."""
         return CatalogSnapshot(self._journal.read())
 
     def _append(self, records, *, expected_revision: int) -> CatalogSnapshot:
         return CatalogSnapshot(self._journal.append(records, expected_revision=expected_revision, validate=_validate))
 
     def add_work(self, work: BibliographicWork, *, expected_revision: int) -> CatalogSnapshot:
+        """Append a work's metadata head without merging it with similar works."""
         return self._append([work], expected_revision=expected_revision)
 
     def add_edition(self, edition: EditionOrVersion, *, expected_revision: int) -> CatalogSnapshot:
+        """Append edition metadata while preserving its established work identity."""
         return self._append([edition], expected_revision=expected_revision)
 
     def propose_grouping(self, proposal: GroupingProposal, *, expected_revision: int) -> CatalogSnapshot:
+        """Record a candidate grouping without making it authoritative."""
         return self._append([proposal], expected_revision=expected_revision)
 
     def decide_grouping(self, decision: GroupingDecision, *, expected_revision: int) -> CatalogSnapshot:
+        """Consume a proposal once, checking evidence before authoritative grouping."""
         return self._append([decision], expected_revision=expected_revision)
 
     def edition_of(self, artifact_sha256: str) -> EditionOrVersion | None:
+        """The edition established by an authoritative decision, if one exists."""
         snapshot = self.snapshot()
         edition = snapshot.authoritative().get(artifact_sha256)
         return snapshot.edition(edition) if edition else None
 
     def candidates_for(self, artifact_sha256: str) -> tuple[GroupingProposal, ...]:
+        """Undecided candidate groupings for this exact artifact."""
         snapshot = self.snapshot()
         decided = snapshot.decided()
         return tuple(p for p in snapshot.proposals() if p.artifact_sha256 == artifact_sha256 and p.id not in decided)
 
     def artifacts_of(self, edition: str) -> tuple[str, ...]:
+        """Exact artifact digests authoritatively assigned to the named edition."""
         return tuple(sorted(sha for sha, e in self.snapshot().authoritative().items() if e == edition))
 
 
@@ -158,35 +183,47 @@ def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
     proposals = {p.id: p for p in a.proposals()}
     for record in new:
         if isinstance(record, EditionOrVersion):
-            if record.work not in works:
-                raise CatalogError(f"edition {record.id} names unknown work {record.work}")
-            earlier = b.edition(record.id)
-            if earlier is not None and earlier.work != record.work:
-                raise CatalogError(f"edition {record.id} cannot move from work {earlier.work} to {record.work}")
+            _check_edition(record, b, works)
         elif isinstance(record, GroupingProposal):
-            if record.edition not in editions:
-                raise CatalogError(f"proposal {record.id} names unknown edition {record.edition}")
-            if record.id in {p.id for p in b.proposals()}:
-                raise CatalogError(f"proposal {record.id} already exists")
+            _check_proposal(record, b, editions)
         elif isinstance(record, GroupingDecision):
-            proposal = proposals.get(record.proposal)
-            if proposal is None:
-                raise CatalogError(f"decision {record.id} names unknown proposal {record.proposal}")
-            if record.proposal in b.decided():
-                raise CatalogError(f"proposal {record.proposal} was already decided")
-            if record.status == "authoritative":
-                if not strong_enough(proposal.evidence) and not record.decided_by.startswith("user:"):
-                    raise CatalogError(
-                        f"proposal {proposal.id} carries no strong identity evidence; authoritative grouping needs "
-                        "an ISBN, DOI, exact arXiv version or explicit human confirmation"
-                    )
-                existing = b.authoritative().get(proposal.artifact_sha256)
-                if existing is not None and existing != proposal.edition:
-                    raise CatalogError(f"artifact {proposal.artifact_sha256} already belongs to edition {existing}")
+            _check_decision(record, b, proposals)
         elif isinstance(record, BibliographicWork):
             continue
         else:
             raise CatalogError(f"unsupported catalog record {type(record).__name__}")
+
+
+def _check_edition(record: EditionOrVersion, before: CatalogSnapshot, works: set[str]) -> None:
+    if record.work not in works:
+        raise CatalogError(f"edition {record.id} names unknown work {record.work}")
+    earlier = before.edition(record.id)
+    if earlier is not None and earlier.work != record.work:
+        raise CatalogError(f"edition {record.id} cannot move from work {earlier.work} to {record.work}")
+
+
+def _check_proposal(record: GroupingProposal, before: CatalogSnapshot, editions: Mapping[str, EditionOrVersion]) -> None:
+    if record.edition not in editions:
+        raise CatalogError(f"proposal {record.id} names unknown edition {record.edition}")
+    if record.id in {p.id for p in before.proposals()}:
+        raise CatalogError(f"proposal {record.id} already exists")
+
+
+def _check_decision(record: GroupingDecision, before: CatalogSnapshot, proposals: Mapping[str, GroupingProposal]) -> None:
+    proposal = proposals.get(record.proposal)
+    if proposal is None:
+        raise CatalogError(f"decision {record.id} names unknown proposal {record.proposal}")
+    if record.proposal in before.decided():
+        raise CatalogError(f"proposal {record.proposal} was already decided")
+    if record.status == "authoritative":
+        if not strong_enough(proposal.evidence) and not record.decided_by.startswith("user:"):
+            raise CatalogError(
+                f"proposal {proposal.id} carries no strong identity evidence; authoritative grouping needs "
+                "an ISBN, DOI, exact arXiv version or explicit human confirmation"
+            )
+        existing = before.authoritative().get(proposal.artifact_sha256)
+        if existing is not None and existing != proposal.edition:
+            raise CatalogError(f"artifact {proposal.artifact_sha256} already belongs to edition {existing}")
 
 
 # --- proposing from metadata --------------------------------------------------
