@@ -1,6 +1,6 @@
 """Bounded prerequisite traversal with atomic proposal checkpoints.
 
-Resolvers propose records; B2 authenticates evidence and the decision before a
+Resolvers propose records; ledger policy authenticates evidence and the decision before a
 parent can resume. Exact item/kind/scope/context keys detect semantic cycles even
 when a resolver gives the same work a new ID. Persisted child edges make restart
 recoverable; provider retries and capability timeouts remain owned by callers.
@@ -8,7 +8,7 @@ recoverable; provider retries and capability timeouts remain owned by callers.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from hardy.foundation.values import json_digest
 from hardy.workflows.acquisition.classifier import GapClassifier
@@ -35,6 +35,8 @@ ResolverKey = GapKind | str | tuple[GapKind | str, ObligationKind | str]
 
 @dataclass(frozen=True)
 class ResolutionReport:
+    """The traversal's outcome, with every visited obligation still lacking acceptance."""
+
     root: VersionRef
     resolved: bool
     attempts: int
@@ -42,7 +44,29 @@ class ResolutionReport:
     reasons: tuple[str, ...]
 
 
+@dataclass
+class _Traversal:
+    """One shared attempt/depth allowance and the account of every recursive branch."""
+
+    max_attempts: int
+    max_depth: int
+    attempts: int = 0
+    reasons: list[str] = field(default_factory=list)
+    visited: dict[str, VersionRef] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _Attempt:
+    """A resolver's proposal against the exact snapshot after its controlled effects."""
+
+    snapshot: LedgerSnapshot
+    work: Obligation
+    result: ResolverResult
+
+
 class RecursiveResolver:
+    """Traverse recorded prerequisites; only authenticated policy acceptance closes work."""
+
     def __init__(self, store: LedgerStore, *, classifier: GapClassifier,
                  policy: LedgerPolicy, resolvers: Mapping[ResolverKey, Resolver],
                  decide: Callable[[LedgerSnapshot, Resolution], ArtifactRef | None],
@@ -132,114 +156,128 @@ class RecursiveResolver:
 
     def resolve(self, root: VersionRef, *, max_attempts: int = 64,
                 max_depth: int = 64) -> ResolutionReport:
+        """Spend one allowance across all branches, retaining independent unresolved work."""
         if type(max_attempts) is not int or max_attempts < 0:
             raise ValueError("max_attempts must be a nonnegative integer")
         if type(max_depth) is not int or not 1 <= max_depth <= 128:
             raise ValueError("max_depth must be between 1 and 128")
-        attempts = 0
-        reasons: list[str] = []
-        visited: dict[str, VersionRef] = {}
+        traversal = _Traversal(max_attempts, max_depth)
+        resolved = self._visit(root, (), traversal)
+        snapshot = self.store.read()
+        outstanding = tuple(work.ref for ref in traversal.visited.values()
+            if not self._accepted(snapshot, work := self._work(snapshot, ref)))
+        return ResolutionReport(root, resolved, traversal.attempts, outstanding, tuple(traversal.reasons))
 
-        def visit(ref: VersionRef, path: tuple[tuple, ...]) -> bool:
-            nonlocal attempts
-            self.check_cancelled()
+    def _visit(self, ref: VersionRef, path: tuple[tuple, ...], traversal: _Traversal) -> bool:
+        self.check_cancelled()
+        snapshot = self.store.read()
+        work = self._work(snapshot, ref)
+        traversal.visited[work.id] = work.ref
+        if self._accepted(snapshot, work):
+            return True
+        key = self._key(work)
+        if key in path:
+            traversal.reasons.append(f"{work.id}: prerequisite cycle")
+            return False
+        if len(path) >= traversal.max_depth:
+            traversal.reasons.append(f"{work.id}: prerequisite depth budget exhausted")
+            return False
+        path = (*path, key)
+        while True:
             snapshot = self.store.read()
             work = self._work(snapshot, ref)
-            visited[work.id] = work.ref
-            if self._accepted(snapshot, work):
-                return True
-            key = self._key(work)
-            if key in path:
-                reasons.append(f"{work.id}: prerequisite cycle")
+            # Do not short circuit: independent open branches still receive work.
+            ready = [self._visit(child, path, traversal) for child in self._children(snapshot, work)]
+            if not all(ready):
+                traversal.reasons.append(f"{work.id}: unresolved child obligations")
                 return False
-            if len(path) >= max_depth:
-                reasons.append(f"{work.id}: prerequisite depth budget exhausted")
+            if traversal.attempts >= traversal.max_attempts:
+                traversal.reasons.append(f"{work.id}: attempt budget exhausted")
                 return False
-            path = (*path, key)
-            while True:
-                snapshot = self.store.read()
-                work = self._work(snapshot, ref)
-                children = self._children(snapshot, work)
-                # Do not short circuit: independent open branches still receive work.
-                ready = [visit(child, path) for child in children]
-                if not all(ready):
-                    reasons.append(f"{work.id}: unresolved child obligations")
-                    return False
-                if attempts >= max_attempts:
-                    reasons.append(f"{work.id}: attempt budget exhausted")
-                    return False
-                snapshot = self.store.read()
-                work = self._work(snapshot, ref)
-                self.check_cancelled()
-                gap = self.classifier.classify(snapshot, work)
-                if gap.obligation != work:
-                    raise ValueError("classification names another obligation")
-                snapshot = self._append(snapshot, (gap.record(),))
-                result = self._typed_acquisition(snapshot, work, gap)
-                resolver = self.resolvers.get((gap.kind, work.kind), self.resolvers.get(gap.kind))
-                if result is None and resolver is None:
-                    reasons.append(f"{work.id}: no resolver registered for {gap.kind.value}")
-                    return False
-                attempts += 1
-                self.check_cancelled()
-                if result is None:
-                    result = resolver(snapshot, work, gap)
-                self.check_cancelled()
-                if not isinstance(result, ResolverResult):
-                    raise ValueError("resolver must return candidate records")
-                if result.effects is not None:
-                    if self.read_effects is None:
-                        raise ValueError("controlled ledger effects reader unavailable")
-                    snapshot = self.read_effects(snapshot, result.effects)
-                    work = self._work(snapshot, ref)
-                links = []
-                for child in result.children:
-                    contexts = {None}
-                    if work.context is not None:
-                        contexts.update(context.ref for context in LedgerGraph(snapshot).context_chain(work.context))
-                    if child.scope != work.scope or child.context not in contexts:
-                        raise ValueError("child obligation must preserve acquisition scope/context")
-                    if self._key(child) in path:
-                        reasons.append(f"{work.id}: prerequisite cycle")
-                        return False
-                    digest = json_digest([work.ref.model_dump(), child.ref.model_dump()])
-                    links.append(Relation(id=f"prerequisite-{digest}", kind="blocked_by",
-                                          source=work.ref, target=child.ref))
-                proposal = Resolution(id=f"attempt-{work.id}-{snapshot.revision}",
-                    obligation=work.ref, item=work.item, evidence=result.evidence,
-                    outstanding=tuple(child.ref for child in result.children),
-                    explanation=result.detail or "No result supplied")
-                snapshot = self._append(snapshot, (*result.records, *result.children, *links, proposal))
-                if result.children:
-                    before = attempts
-                    ready = [visit(child.ref, path) for child in result.children]
-                    if not all(ready):
-                        reasons.append(f"{work.id}: unresolved child obligations")
-                        return False
-                    if attempts == before:
-                        reasons.append(f"{work.id}: resolver repeated completed children without progress")
-                        return False
-                    continue
-                if not result.evidence:
-                    reasons.append(f"{work.id}: {result.detail or 'unresolved; no evidence'}")
-                    return False
-                receipt = self.decide(snapshot, proposal)
-                self.check_cancelled()
-                if receipt is None:
-                    reasons.append(f"{work.id}: acceptance decision unavailable")
-                    return False
-                try:
-                    accepted = self.policy.accept(snapshot, proposal, receipt)
-                except ValueError as error:
-                    reasons.append(f"{work.id}: acceptance refused: {error}")
-                    return False
-                closed = Obligation.model_validate({**work.model_dump(), "previous": work.ref,
-                    "status": "resolved", "resolution": accepted})
-                self._append(snapshot, (closed,))
-                return True
+            attempt = self._attempt(ref, traversal)
+            if attempt is None:
+                return False
+            recorded = self._record_attempt(attempt, path, traversal)
+            if recorded is None:
+                return False
+            snapshot, proposal = recorded
+            if not attempt.result.children:
+                return self._accept_attempt(attempt, snapshot, proposal, traversal)
+            before = traversal.attempts
+            ready = [self._visit(child.ref, path, traversal) for child in attempt.result.children]
+            if not all(ready):
+                traversal.reasons.append(f"{attempt.work.id}: unresolved child obligations")
+                return False
+            if traversal.attempts == before:
+                traversal.reasons.append(f"{attempt.work.id}: resolver repeated completed children without progress")
+                return False
 
-        resolved = visit(root, ())
+    def _attempt(self, ref: VersionRef, traversal: _Traversal) -> _Attempt | None:
         snapshot = self.store.read()
-        outstanding = tuple(work.ref for ref in visited.values()
-            if not self._accepted(snapshot, work := self._work(snapshot, ref)))
-        return ResolutionReport(root, resolved, attempts, outstanding, tuple(reasons))
+        work = self._work(snapshot, ref)
+        self.check_cancelled()
+        gap = self.classifier.classify(snapshot, work)
+        if gap.obligation != work:
+            raise ValueError("classification names another obligation")
+        snapshot = self._append(snapshot, (gap.record(),))
+        result = self._typed_acquisition(snapshot, work, gap)
+        resolver = self.resolvers.get((gap.kind, work.kind), self.resolvers.get(gap.kind))
+        if result is None and resolver is None:
+            traversal.reasons.append(f"{work.id}: no resolver registered for {gap.kind.value}")
+            return None
+        traversal.attempts += 1
+        self.check_cancelled()
+        if result is None:
+            result = resolver(snapshot, work, gap)
+        self.check_cancelled()
+        if not isinstance(result, ResolverResult):
+            raise ValueError("resolver must return candidate records")
+        if result.effects is not None:
+            if self.read_effects is None:
+                raise ValueError("controlled ledger effects reader unavailable")
+            snapshot = self.read_effects(snapshot, result.effects)
+            work = self._work(snapshot, ref)
+        return _Attempt(snapshot, work, result)
+
+    def _record_attempt(self, attempt: _Attempt, path: tuple[tuple, ...],
+                        traversal: _Traversal) -> tuple[LedgerSnapshot, Resolution] | None:
+        snapshot, work, result = attempt.snapshot, attempt.work, attempt.result
+        links = []
+        for child in result.children:
+            contexts = {None}
+            if work.context is not None:
+                contexts.update(context.ref for context in LedgerGraph(snapshot).context_chain(work.context))
+            if child.scope != work.scope or child.context not in contexts:
+                raise ValueError("child obligation must preserve acquisition scope/context")
+            if self._key(child) in path:
+                traversal.reasons.append(f"{work.id}: prerequisite cycle")
+                return None
+            digest = json_digest([work.ref.model_dump(), child.ref.model_dump()])
+            links.append(Relation(id=f"prerequisite-{digest}", kind="blocked_by", source=work.ref, target=child.ref))
+        proposal = Resolution(id=f"attempt-{work.id}-{snapshot.revision}",
+            obligation=work.ref, item=work.item, evidence=result.evidence,
+            outstanding=tuple(child.ref for child in result.children),
+            explanation=result.detail or "No result supplied")
+        snapshot = self._append(snapshot, (*result.records, *result.children, *links, proposal))
+        return snapshot, proposal
+
+    def _accept_attempt(self, attempt: _Attempt, snapshot: LedgerSnapshot,
+                        proposal: Resolution, traversal: _Traversal) -> bool:
+        work, result = attempt.work, attempt.result
+        if not result.evidence:
+            traversal.reasons.append(f"{work.id}: {result.detail or 'unresolved; no evidence'}")
+            return False
+        receipt = self.decide(snapshot, proposal)
+        self.check_cancelled()
+        if receipt is None:
+            traversal.reasons.append(f"{work.id}: acceptance decision unavailable")
+            return False
+        try:
+            accepted = self.policy.accept(snapshot, proposal, receipt)
+        except ValueError as error:
+            traversal.reasons.append(f"{work.id}: acceptance refused: {error}")
+            return False
+        closed = Obligation.model_validate({**work.model_dump(), "previous": work.ref,
+            "status": "resolved", "resolution": accepted})
+        self._append(snapshot, (closed,))
+        return True
