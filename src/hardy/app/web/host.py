@@ -314,7 +314,7 @@ class WebHost:
         """
         with self._lock:
             self._seq += 1
-            event = {"seq": self._seq, **event}
+            event = {**event, "seq": self._seq}
             self._ring.append(event)
             for sub in self._subscribers:
                 sub.queue.put(event)

@@ -622,6 +622,23 @@ def test_subscribe_replays_from_a_sequence(tmp_path: Path) -> None:
         host.stop()
 
 
+def test_event_numbers_belong_to_the_stream_not_the_emitting_payload(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        sub = host.subscribe()
+        first = host.emit({"type": "notice", "text": "one"})
+        payload = {"type": "notice", "text": "two", "seq": -1000}
+        second = host.emit(payload)
+        assert second == first + 1
+        assert [sub.queue.get(timeout=1)["seq"] for _ in range(2)] == [first, second]
+        replay = host.subscribe(after=first)
+        assert replay.queue.get(timeout=1) == {"type": "notice", "text": "two", "seq": second}
+        assert replay.queue.empty()
+        assert payload["seq"] == -1000, "emission does not mutate the caller's value"
+    finally:
+        host.stop()
+
+
 def test_a_closed_subscription_stops_receiving(tmp_path: Path) -> None:
     host = _host(tmp_path)
     try:
