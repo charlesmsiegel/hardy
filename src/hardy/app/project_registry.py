@@ -24,15 +24,16 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from hardy.app.config import existing_projects
 from hardy.foundation import paths
 from hardy.foundation.files import WriteGuard
+from hardy.foundation.locking import FileLock
 from hardy.workflows import layout
 
 SCHEMA = "hardy.projects/v1"
@@ -104,12 +105,6 @@ class ProjectRegistry:
         self.path = path if path is not None else default_registry_path()
         self.default_root = self.resolve(default_root if default_root is not None else default_projects_root())
         self._now = now
-        # Every write is a read-modify-write of the whole file, and the host
-        # calls in from two threads: an open's `touch` on the event loop, a
-        # forget or add on whichever HTTP thread carried the request. Without
-        # this a forget that lands between the touch's read and its write is
-        # undone by the write. One process, one instance, one lock.
-        self._lock = threading.Lock()
 
     @staticmethod
     def resolve(path: Path | str) -> Path:
@@ -190,6 +185,15 @@ class ProjectRegistry:
 
     # -- writing ---------------------------------------------------------
 
+    @contextmanager
+    def _writing(self) -> Iterator[None]:
+        # The whole read-modify-write belongs to the file, not one Python
+        # instance: two hosts may share it. Atomic replacement prevents torn
+        # JSON but cannot keep one host from overwriting the other's update.
+        guard = WriteGuard(self.path.parent, create=True)
+        with FileLock(guard.path(self.path.name + ".lock")):
+            yield
+
     def _write(self, data: dict[str, Any]) -> None:
         # Through the guard: the write is atomic, and `~/.hardy` replaced by a
         # link elsewhere is refused rather than followed.
@@ -212,7 +216,7 @@ class ProjectRegistry:
             # problem's own name has not been through the check yet.
             if layout.validate_slug(problem.name) != problem.name:
                 raise layout.LayoutError(f"{problem.name!r} is not a project name Hardy accepts")
-        with self._lock:
+        with self._writing():
             data = self._read()
             known = {row["path"] for row in data["projects"]}
             stamp = self._now()
@@ -225,7 +229,7 @@ class ProjectRegistry:
     def forget(self, path: Path | str) -> list[Entry]:
         """Drop the entry. The directory is never touched."""
         target = str(self.resolve(path))
-        with self._lock:
+        with self._writing():
             data = self._read()
             remaining = [row for row in data["projects"] if row.get("path") != target]
             if len(remaining) != len(data["projects"]):
@@ -238,7 +242,7 @@ class ProjectRegistry:
     def touch(self, path: Path | str) -> list[Entry]:
         """Mark `path` as the project last opened, registering it if it is not."""
         target = str(self.resolve(path))
-        with self._lock:
+        with self._writing():
             data = self._read()
             stamp = self._now()
             for row in data["projects"]:

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 from web_fakes import make_problem
 
+from hardy.app import project_registry
 from hardy.app.project_registry import SCHEMA, ProjectRegistry
+from hardy.foundation.locking import FileLock, LockTimeout
 from hardy.workflows import layout
 
 
@@ -130,3 +134,56 @@ def test_an_unreadable_file_is_refused_with_its_path(tmp_path: Path) -> None:
     path.write_text(json.dumps({"schema": "hardy.projects/v9", "projects": []}), encoding="utf-8")
     with pytest.raises(ValueError, match="hardy.projects/v9"):
         _registry(tmp_path).entries()
+
+
+@pytest.mark.parametrize("operation", ["add", "touch", "forget"])
+def test_registry_instances_share_the_whole_write_transaction(tmp_path: Path, monkeypatch, operation):
+    first, second = _registry(tmp_path), _registry(tmp_path)
+    a = make_problem(tmp_path / "math", "sylow")
+    b = make_problem(tmp_path / "math", "burnside")
+    if operation == "forget":
+        first.touch(a)
+    read_started, second_started, second_done = Event(), Event(), Event()
+    original_read = first._read
+
+    def hold_snapshot():
+        data = original_read()
+        read_started.set()
+        assert second_started.wait(5), "second writer never started"
+        # An independent writer used to finish while this snapshot was held.
+        # A shared transaction lock makes it wait until this write commits.
+        second_done.wait(1)
+        return data
+
+    def add_other_project():
+        second_started.set()
+        try:
+            second.touch(b)
+        finally:
+            second_done.set()
+
+    monkeypatch.setattr(first, "_read", hold_snapshot)
+    with ThreadPoolExecutor(max_workers=2) as writers:
+        pending = writers.submit(getattr(first, operation), a)
+        assert read_started.wait(5), "first writer never read its snapshot"
+        other = writers.submit(add_other_project)
+        pending.result(timeout=10)
+        other.result(timeout=10)
+    expected = {b.resolve()} if operation == "forget" else {a.resolve(), b.resolve()}
+    assert {entry.path for entry in _registry(tmp_path).entries()} == expected
+
+
+@pytest.mark.parametrize("operation", ["add", "touch", "forget"])
+def test_busy_registry_lock_refuses_writes_and_releases_afterward(tmp_path, monkeypatch, operation):
+    registry = _registry(tmp_path)
+    a = make_problem(tmp_path / "math", "sylow")
+    b = make_problem(tmp_path / "math", "burnside")
+    registry.touch(a)
+    before = registry.path.read_bytes()
+    monkeypatch.setattr(project_registry, "FileLock", lambda path: FileLock(path, timeout=0))
+    with FileLock(registry.path.with_name(registry.path.name + ".lock")):
+        with pytest.raises(LockTimeout):
+            getattr(registry, operation)(a if operation == "forget" else b)
+        assert registry.path.read_bytes() == before
+    registry.touch(b)
+    assert {entry.path for entry in registry.entries()} == {a.resolve(), b.resolve()}

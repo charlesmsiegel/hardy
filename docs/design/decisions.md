@@ -902,6 +902,11 @@ holds no session, which every project-scoped request has to refuse.
 
 Revisit when: `hardy chat` should read the registry too.
 
+Registry mutations hold the shared foundation file lock across the complete
+read-modify-write. Atomic replacement keeps JSON whole, but an instance-local
+thread lock cannot prevent two hosts from overwriting one another's updates.
+The descriptor owns the lock; a rendezvous file left after exit does not.
+
 ### Process artifacts are not kept in the tree
 
 We chose to keep specifications, plans and reports out of the repository, over
