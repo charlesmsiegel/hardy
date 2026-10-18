@@ -270,6 +270,7 @@ def build_tree(
         diagnostics=tuple(diagnostics), supersedes=previous.id if previous else None, built_at=_stamp(),
     )
 
+
 def _heading_units(text_obs: list[StructuralObservation]) -> list[Unit]:
     """Text headings win when native and heuristic observations share a start."""
     units = []
