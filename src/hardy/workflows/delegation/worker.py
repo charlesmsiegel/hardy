@@ -276,8 +276,8 @@ class _WorkerState:
             return ToolResult(False, str(error))
         return ToolResult(result.accepted, result.model_dump_json())
 
-    def start_deadline(self, runtime: ChatRuntime) -> threading.Timer | None:
-        """Cancel a still-running provider when this worker's active-time lease expires."""
+    def deadline_timer(self, runtime: ChatRuntime) -> threading.Timer | None:
+        """Prepare cancellation at the active-time ceiling; the caller owns startup and cleanup."""
         if self.launch.lease.active_seconds is None:
             return None
         # Provider time is spend too: when the lease runs out the runtime is
@@ -289,7 +289,6 @@ class _WorkerState:
 
         deadline = threading.Timer(self.launch.lease.active_seconds, expire)
         deadline.daemon = True
-        deadline.start()
         return deadline
 
     def close(self) -> None:
@@ -379,7 +378,10 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
         store.append("worker.opened", {"context_id": opened.context_id, "model": getattr(opened.runtime, "model", None)},
                      phase=RunPhase.PROVING)
         token.on_cancel(opened.runtime.cancel)
-        deadline = state.start_deadline(opened.runtime)
+        deadline = state.deadline_timer(opened.runtime)
+        if deadline is not None:
+            # Retain ownership before start can be interrupted, so finally can cancel it.
+            deadline.start()
         exchanges = 1
         for event in opened.runtime.stream(launch.prompt):
             if event.kind == "reply":

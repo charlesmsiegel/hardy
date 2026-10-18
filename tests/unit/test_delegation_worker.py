@@ -77,6 +77,27 @@ def test_each_launch_gets_its_own_runtime_and_context(tmp_path):
     assert opened[0].context["dispatch"] is not opened[1].context["dispatch"]
 
 
+def test_interrupted_timer_start_still_cancels_the_timer(tmp_path, monkeypatch):
+    timers = []
+
+    class InterruptedTimer:
+        def __init__(self, seconds, callback):
+            self.cancelled = False
+            timers.append(self)
+
+        def start(self):
+            raise KeyboardInterrupt("during timer startup")
+
+        def cancel(self):
+            self.cancelled = True
+
+    monkeypatch.setattr("hardy.workflows.delegation.worker.threading.Timer", InterruptedTimer)
+    launch = dataclasses.replace(_launch(tmp_path), lease=ResourceLease(active_seconds=1, official_checks=1))
+    with pytest.raises(KeyboardInterrupt, match="during timer startup"):
+        run_worker(launch, _open([]), CancelToken())
+    assert len(timers) == 1 and timers[0].cancelled
+
+
 def test_unreported_usage_stays_unknown(tmp_path):
     result = run_worker(_launch(tmp_path), _open([call("finish", {"status": "partial", "synthesis": "stuck"})]),
                         CancelToken())
