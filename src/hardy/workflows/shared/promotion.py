@@ -23,6 +23,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -34,6 +35,7 @@ from hardy.formal.syntax import (
     DeclarationRefused,
     assumptions,
     build_order,
+    declarations,
     module_path,
     parse_imports,
     statements,
@@ -250,6 +252,16 @@ def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
         heads[record.id] = record
 
 
+@dataclass(frozen=True)
+class _CheckedPromotion:
+    """The exact audited sources, compiled mirror and realization ready for publication."""
+
+    sources: Mapping[str, str]
+    build: Path
+    realization: FormalRealization
+    verification: EvidenceRef
+
+
 class Promoter:
     def __init__(
         self, *, shared_root: Path, shared_build: Path, compile: Compile, environment: EnvironmentIdentity,
@@ -326,45 +338,15 @@ class Promoter:
         temporary = Path(tempfile.mkdtemp(prefix="hardy-promotion-"))
         shadow_root, shadow_build = temporary / "lean", temporary / "build"
         try:
-            if self.shared_root.is_dir():
-                files_under(self.shared_root, ".lean")
-                shutil.copytree(self.shared_root, shadow_root)
-            else:
-                shadow_root.mkdir(parents=True)
-            if self.shared_build.is_dir():
-                shutil.copytree(self.shared_build, shadow_build)
-            else:
-                shadow_build.mkdir(parents=True)
-            for shared, source in staged.items():
-                guard, name = guard_for(shadow_root, module_path(shared), create=True)
-                # Not fsynced: every byte here lands in a scratch tree that is
-                # deleted once this promotion either commits its own write
-                # into the real shared tree below, or fails.
-                guard.write_text(name, source, sync=False)
-            shadow = LeanWorkspace(shadow_root, shadow_build, self._compile, environment=json_digest(self.environment.model_dump(mode="json")))
+            shadow = self._prepare_shadow(shadow_root, shadow_build, staged)
             targets = tuple(staged)
             failure = shadow.build_modules(targets)
             if failure is not None:
                 return self._fail(record, PromotionBlocker(kind="build_failed", detail=f"{failure.module}: {failure.output}"[:2000]))
             verdicts = self._audit(shadow, targets)
             target_module = renames[record.source_module]
-            short = record.declaration.rsplit(".", 1)[-1]
-            for shared in targets:
-                verdict = verdicts.get(shared)
-                if verdict is None or verdict.get("status") != "clean" or verdict.get("assumed"):
-                    return self._fail(record, PromotionBlocker(kind="audit_failed", detail=f"{shared}: audit {verdict!r} is not clean in the current environment"))
-                # Bare names remain supported for legacy adapters; canonical
-                # audit output carries a name and axiom list for each entry.
-                established = set()
-                for entry in verdict.get("declarations") or ():
-                    name = entry.get("name") if isinstance(entry, Mapping) else entry
-                    if isinstance(name, str):
-                        established.add(name)
-                if shared == target_module and not ({record.declaration, short} & established):
-                    # A clean module status says nothing about a declaration the
-                    # audit never looked at; the promoted declaration must be
-                    # among the ones the audit actually established.
-                    return self._fail(record, PromotionBlocker(kind="audit_failed", detail=f"the audit of {shared} does not cover {record.declaration}; only an audited declaration promotes"))
+            if blocker := _audit_blocker(verdicts, targets, target_module, record.declaration):
+                return self._fail(record, blocker)
             declared = _declared(staged[target_module])
             if record.declaration not in declared:
                 return self._fail(record, PromotionBlocker(kind="missing_module", detail=f"{target_module} does not declare {record.declaration} after staging"))
@@ -378,55 +360,83 @@ class Promoter:
                 environment=self.environment, imports=(target_module,), project=record.project, status="candidate",
                 history=(f"promoted from {record.project}:{record.source_module} by {record.actor}",), at=_stamp(),
             )
-            # Commit under the shared tree's lock: the head is checked again
-            # inside it, so a promotion that landed during the build is seen
-            # before anything is written rather than silently overwritten.
-            self.shared_root.parent.mkdir(parents=True, exist_ok=True)
-            with FileLock(self.shared_root.with_name(self.shared_root.name + ".promotion.lock")):
-                if shared_head(self.shared_root) != record.shared_head:
-                    return self._fail(record, PromotionBlocker(kind="stale_shared_head", detail="another promotion changed the shared library during this one; prepare it again"))
-                before = {shared: _read_if_file(self.shared_root / module_path(shared)) for shared in staged}
-                for shared, source in staged.items():
-                    published = before[shared]
-                    # `source` is already LF-only (`staged` was normalised
-                    # above); `published` is read straight off disk and may
-                    # still carry CRLF from a promotion made before this fix,
-                    # so it alone needs normalising here.
-                    if published is not None and normalize_newlines(published.decode("utf-8", "replace")) != source:
-                        # A published module is what its consumers import; different
-                        # mathematics under the same name would change what an old
-                        # realization means. Identical bytes are a harmless re-promotion.
-                        return self._fail(record, PromotionBlocker(kind="target_conflict", detail=f"{shared} is already published with different content; a changed module is a new realization line, not an overwrite"))
-                build_before = temporary / "build-before"
-                try:
-                    with publish_build(shadow_build, self.shared_build):
-                        for shared, source in staged.items():
-                            guard, name = guard_for(self.shared_root, module_path(shared), create=True)
-                            guard.write_text(name, source)
-                        held = self.realizations.heads().get(realization.id)
-                        if held is not None and held.status == "attached" and held.source_sha256 == source_sha:
-                            attached = held  # the same bytes were promoted before; nothing new to vouch for
-                        else:
-                            self.realizations.propose(realization)
-                            attached = self.realizations.attach(realization.id, verification=verification, faithfulness=request.faithfulness,
-                                                                approval=request.approval, actor=record.actor)
-                except Exception as error:
-                    # Files without an admitted realization would be a shared
-                    # module nothing vouches for: put the tree back as it was.
-                    try:
-                        self._restore(before, build_before)
-                    except OSError as recovery_error:
-                        self._withdraw(realization.id, f"{type(error).__name__}: {error}")
-                        return self._fail(record, PromotionBlocker(kind="admission_failed", detail=f"{error}; shared source rollback failed: {recovery_error}"[:2000]))
-                    self._withdraw(realization.id, f"{type(error).__name__}: {error}")
-                    return self._fail(record, PromotionBlocker(kind="admission_failed", detail=f"{type(error).__name__}: {error}; shared sources restored"[:2000]))
+            published = self._publish(record, request, _CheckedPromotion(staged, shadow_build, realization, verification))
+            if isinstance(published, PromotionRecord):
+                return published
+            attached = published
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
         admitted = record.model_copy(update={"status": "admitted", "realization": attached.id, "verification": verification, "at": _stamp(),
                                              "history": (*record.history, f"admitted as {attached.id} in {target_module}")})
         return self.promotions.append(admitted)
 
-    def _restore(self, before: Mapping[str, bytes | None], build_before: Path) -> None:
+    def _prepare_shadow(self, shadow_root: Path, shadow_build: Path,
+                         staged: Mapping[str, str]) -> LeanWorkspace:
+        """Copy the current source/build mirrors and overlay the exact proposed source bytes."""
+        if self.shared_root.is_dir():
+            files_under(self.shared_root, ".lean")
+            shutil.copytree(self.shared_root, shadow_root)
+        else:
+            shadow_root.mkdir(parents=True)
+        if self.shared_build.is_dir():
+            shutil.copytree(self.shared_build, shadow_build)
+        else:
+            shadow_build.mkdir(parents=True)
+        for shared, source in staged.items():
+            guard, name = guard_for(shadow_root, module_path(shared), create=True)
+            # Not fsynced: every byte here lands in a scratch tree that is
+            # deleted once this promotion either commits its own write
+            # into the real shared tree below, or fails.
+            guard.write_text(name, source, sync=False)
+        return LeanWorkspace(shadow_root, shadow_build, self._compile, environment=json_digest(self.environment.model_dump(mode="json")))
+
+    def _publish(self, record: PromotionRecord, request: PromotionRequest,
+                 checked: _CheckedPromotion) -> FormalRealization | PromotionRecord:
+        """Recheck the shared head under lock, then publish files and attach their realization."""
+        # Commit under the shared tree's lock: the head is checked again
+        # inside it, so a promotion that landed during the build is seen
+        # before anything is written rather than silently overwritten.
+        self.shared_root.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(self.shared_root.with_name(self.shared_root.name + ".promotion.lock")):
+            if shared_head(self.shared_root) != record.shared_head:
+                return self._fail(record, PromotionBlocker(kind="stale_shared_head", detail="another promotion changed the shared library during this one; prepare it again"))
+            before = {shared: _read_if_file(self.shared_root / module_path(shared)) for shared in checked.sources}
+            for shared, source in checked.sources.items():
+                published = before[shared]
+                # `source` is already LF-only (`staged` was normalised
+                # above); `published` is read straight off disk and may
+                # still carry CRLF from a promotion made before this fix,
+                # so it alone needs normalising here.
+                if published is not None and normalize_newlines(published.decode("utf-8", "replace")) != source:
+                    # A published module is what its consumers import; different
+                    # mathematics under the same name would change what an old
+                    # realization means. Identical bytes are a harmless re-promotion.
+                    return self._fail(record, PromotionBlocker(kind="target_conflict", detail=f"{shared} is already published with different content; a changed module is a new realization line, not an overwrite"))
+            try:
+                with publish_build(checked.build, self.shared_build):
+                    for shared, source in checked.sources.items():
+                        guard, name = guard_for(self.shared_root, module_path(shared), create=True)
+                        guard.write_text(name, source)
+                    held = self.realizations.heads().get(checked.realization.id)
+                    if held is not None and held.status == "attached" and held.source_sha256 == checked.realization.source_sha256:
+                        attached = held  # the same bytes were promoted before; nothing new to vouch for
+                    else:
+                        self.realizations.propose(checked.realization)
+                        attached = self.realizations.attach(checked.realization.id, verification=checked.verification, faithfulness=request.faithfulness,
+                                                            approval=request.approval, actor=record.actor)
+            except Exception as error:
+                # Files without an admitted realization would be a shared
+                # module nothing vouches for: put the tree back as it was.
+                try:
+                    self._restore(before)
+                except OSError as recovery_error:
+                    self._withdraw(checked.realization.id, f"{type(error).__name__}: {error}")
+                    return self._fail(record, PromotionBlocker(kind="admission_failed", detail=f"{error}; shared source rollback failed: {recovery_error}"[:2000]))
+                self._withdraw(checked.realization.id, f"{type(error).__name__}: {error}")
+                return self._fail(record, PromotionBlocker(kind="admission_failed", detail=f"{type(error).__name__}: {error}; shared sources restored"[:2000]))
+        return attached
+
+    def _restore(self, before: Mapping[str, bytes | None]) -> None:
         for shared, content in before.items():
             path = self.shared_root / module_path(shared)
             if content is None:
@@ -483,8 +493,30 @@ def _read_if_file(path: Path) -> bytes | None:
 
 
 def _declared(source: str) -> set[str]:
-    from hardy.formal.syntax import declarations
 
     found = declarations(source)
     names = set(found.get("theorem", ())) | set(found.get("lemma", ()))
     return names | {n.rsplit(".", 1)[-1] for n in names}
+
+
+def _audit_blocker(verdicts: Mapping[str, Mapping[str, Any]], targets: tuple[str, ...],
+                   target_module: str, declaration: str) -> PromotionBlocker | None:
+    """Every promoted module is clean, and the named declaration must actually be audited."""
+    short = declaration.rsplit(".", 1)[-1]
+    for shared in targets:
+        verdict = verdicts.get(shared)
+        if verdict is None or verdict.get("status") != "clean" or verdict.get("assumed"):
+            return PromotionBlocker(kind="audit_failed", detail=f"{shared}: audit {verdict!r} is not clean in the current environment")
+        # Bare names remain supported for legacy adapters; canonical
+        # audit output carries a name and axiom list for each entry.
+        established = set()
+        for entry in verdict.get("declarations") or ():
+            name = entry.get("name") if isinstance(entry, Mapping) else entry
+            if isinstance(name, str):
+                established.add(name)
+        if shared == target_module and not ({declaration, short} & established):
+            # A clean module status says nothing about a declaration the
+            # audit never looked at; the promoted declaration must be
+            # among the ones the audit actually established.
+            return PromotionBlocker(kind="audit_failed", detail=f"the audit of {shared} does not cover {declaration}; only an audited declaration promotes")
+    return None
