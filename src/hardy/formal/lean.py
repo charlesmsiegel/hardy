@@ -687,10 +687,17 @@ class LeanTools:
         declaration that has a name to ask about.
         """
         body = normalize_newlines(
-            lean_file(self.request.imports, f"{self.request.declaration} := {proof.strip()}\n")
+            self._request_file(f"{self.request.declaration} := {proof.strip()}\n")
         )
         name = self.target_name
         return self.with_audit(body, (f"axioms {name}",)) if audit and name else body
+
+    def _request_file(self, body: str) -> str:
+        # Request's public constructor permits an empty import set. Its files
+        # historically began with two blank lines; recorded bytes keep that
+        # spelling even though the claim renderer uses one.
+        source = lean_file(self.request.imports, body)
+        return source if self.request.imports else "\n" + source
 
     def _run(
         self,
@@ -932,7 +939,7 @@ class LeanTools:
         """What Lean says `name` is, under the request's imports."""
         if not DECLARATION_NAME.fullmatch(name):
             return LeanToolResult(False, "search_declaration accepts one Lean declaration name")
-        return self._run(lean_file(self.request.imports, f"#check {name}\n#print {name}\n"))
+        return self._run(self._request_file(f"#check {name}\n#print {name}\n"))
 
 
 def scratch_source(source: str) -> str:
@@ -994,14 +1001,17 @@ class LeanService:
     def check_proof(
         self, claim: FrozenClaim, proof_body: str, allowed: Sequence[DeclaredAssumption] = ()
     ) -> LeanCheckResult:
+        """Elaborate a candidate around the frozen claim and its declared assumptions."""
         return self._check_source(render_theorem(claim, proof_body, allowed))
 
     def check_scratch(self, source: str) -> LeanCheckResult:
+        """Elaborate bounded exploratory source; it establishes no frozen claim."""
         if len(source.encode("utf-8")) > 64 * 1024:
             raise ValueError("scratch source exceeds the 64 KiB limit")
         return self._check_source(scratch_source(source))
 
     def inspect_declarations(self, names: tuple[str, ...]) -> DeclarationInspection:
+        """Ask Lean for exact declarations, keeping unresolved names distinct from a failed check."""
         if not 1 <= len(names) <= 20:
             raise ValueError("declaration inspection requires between 1 and 20 names")
         if any(not DECLARATION_NAME.fullmatch(name) for name in names):
