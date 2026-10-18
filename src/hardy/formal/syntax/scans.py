@@ -423,67 +423,17 @@ def _structure(source: str) -> _Structure:
     marks = _scopes(text, tokens)
     full = lexed.text
     every = identifier_tokens(full, lexed)
-    heads: list[_Head] = []
-    ends = {end: start for start, end in every.items()}
-    problems: list[str] = []
-    if lexed.overflow is not None:
-        problems.append(
-            f"line {source.count(chr(10), 0, lexed.overflow) + 1}: Hardy cannot tell where "
-            "the strings and comments from here on end"
-        )
-    for index in lexed.uncertain_names():
-        problems.append(
-            f"line {source.count(chr(10), 0, index) + 1}: a `«` opens a name in one reading "
-            "of this file and not in another, so Hardy cannot tell where the name ends"
-        )
-    for start in sorted(every):
-        end = every[start]
-        word = full[start:end]
-        if word in SCOPE_KEYWORDS and (
-            lexed.uncertain(start, end)
-            or any(low <= start < high for low, high in (*unbounded, *blanked))
-        ):
-            problems.append(
-                f"line {source.count(chr(10), 0, start) + 1}: `{word}` sits where Hardy cannot "
-                "tell code from a literal or a syntax quotation, so the names declared after "
-                "it cannot be qualified"
-            )
-        if word not in DECLARATION_KINDS:
-            continue
-        named = _DECLARATION_NAME.match(full, end)
-        if named is None:
-            continue
-        modifiers: list[str] = []
-        cursor = start
-        while True:
-            before = cursor
-            while before and full[before - 1] in _LEAN_SPACE:
-                before -= 1
-            previous = ends.get(before)
-            if previous is None or full[previous:before] not in _HEAD_MODIFIERS:
-                break
-            modifiers.append(full[previous:before])
-            cursor = previous
-        heads.append(
-            _Head(_head_start(full, cursor), start, named.end(), " ".join(reversed(modifiers)), word, named.group(1))
-        )
-    # A name two heads resolve to. Lean refuses a real repeat, so one of them is
-    # quoted -- and since quotations are scanned on purpose, nothing here can
-    # say which. Every consumer addresses a declaration by name (the audit
-    # dedupes, the registration gate passes both, `statements` kept the last),
-    # so a repeat is refused rather than resolved either way.
-    first: dict[tuple[str, ...], int] = {}
+    heads = _declaration_heads(full, every)
+    spans = (*unbounded, *blanked)
+    problems = _lexical_structure_problems(lexed, every, spans)
     duplicates: list[str] = []
     quoted: list[str] = []
     uncertain: list[str] = []
-    spans = (*unbounded, *blanked)
+    first: dict[tuple[str, ...], int] = {}
+    # Every consumer addresses a declaration by name. A repeat may be quoted,
+    # so neither copy can stand for the declaration without guessing.
     for head in heads:
         qualified = declared_name(head.name, _prefix_at(marks, head.keyword))
-        # A head only some reading calls code -- after `+--`, `+/-` or a quote
-        # that may open a literal -- may be inside a comment or a literal to
-        # Lean. Taken as a head, it cut the real statement before it short and
-        # named a declaration nobody wrote. Keyword and name must be code in
-        # every reading, as a scope keyword must.
         if lexed.uncertain(head.keyword, head.end):
             uncertain.append(qualified)
             problems.append(
@@ -492,11 +442,6 @@ def _structure(source: str) -> _Structure:
                 "it is a declaration, nor where the statement before it ends; put a space before a "
                 "`--`, `/-` or char literal that follows a symbol"
             )
-        # A head the quotation count covers -- bounded, unbounded or of
-        # uncertain extent -- is syntax a macro builds, or real code a module
-        # token moved the count past (N4). Either reading changes what the
-        # file declares and where the statement before it ends, so neither is
-        # taken, as for a scope keyword in the same place.
         if any(low <= head.keyword < high for low, high in spans):
             quoted.append(qualified)
             problems.append(
@@ -518,6 +463,66 @@ def _structure(source: str) -> _Structure:
     return _Structure(
         text, tokens, marks, tuple(heads), tuple(problems), tuple(duplicates), tuple(quoted), tuple(uncertain)
     )
+
+
+def _lexical_structure_problems(
+    lexed: Lexed, tokens: Mapping[int, int], quoted: tuple[tuple[int, int], ...]
+) -> list[str]:
+    """Lexical uncertainty that prevents a scope from naming later declarations."""
+    source, full = lexed.source, lexed.text
+    problems: list[str] = []
+    if lexed.overflow is not None:
+        problems.append(
+            f"line {source.count(chr(10), 0, lexed.overflow) + 1}: Hardy cannot tell where "
+            "the strings and comments from here on end"
+        )
+    for index in lexed.uncertain_names():
+        problems.append(
+            f"line {source.count(chr(10), 0, index) + 1}: a `«` opens a name in one reading "
+            "of this file and not in another, so Hardy cannot tell where the name ends"
+        )
+    for start in sorted(tokens):
+        end = tokens[start]
+        word = full[start:end]
+        if word in SCOPE_KEYWORDS and (
+            lexed.uncertain(start, end)
+            or any(low <= start < high for low, high in quoted)
+        ):
+            problems.append(
+                f"line {source.count(chr(10), 0, start) + 1}: `{word}` sits where Hardy cannot "
+                "tell code from a literal or a syntax quotation, so the names declared after "
+                "it cannot be qualified"
+            )
+    return problems
+
+
+def _declaration_heads(text: str, tokens: Mapping[int, int]) -> tuple[_Head, ...]:
+    """Each declaration keyword with its own name, preceding modifiers and extent."""
+    heads: list[_Head] = []
+    ends = {end: start for start, end in tokens.items()}
+    for start in sorted(tokens):
+        end = tokens[start]
+        word = text[start:end]
+        if word not in DECLARATION_KINDS:
+            continue
+        named = _DECLARATION_NAME.match(text, end)
+        if named is None:
+            continue
+        modifiers: list[str] = []
+        cursor = start
+        while True:
+            before = cursor
+            while before and text[before - 1] in _LEAN_SPACE:
+                before -= 1
+            previous = ends.get(before)
+            if previous is None or text[previous:before] not in _HEAD_MODIFIERS:
+                break
+            modifiers.append(text[previous:before])
+            cursor = previous
+        heads.append(
+            _Head(_head_start(text, cursor), start, named.end(), " ".join(reversed(modifiers)), word, named.group(1))
+        )
+    return tuple(heads)
 
 
 def _head_start(text: str, cursor: int) -> int:
