@@ -86,6 +86,7 @@ FINISH_STATUSES = {
 
 @dataclass(frozen=True)
 class WorkerLaunch:
+    """A leaf's prompt, bounded resources and named private capability operations."""
     delegation_id: str
     prompt: str
     model: str | None
@@ -148,6 +149,31 @@ class _WorkerState:
         self._serial = threading.Lock()
         self.cas: CasToolRuntime | None = None
         self.cas_opened = False
+
+    def dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        """Journal one provider tool boundary, then attach findings pushed since the last boundary."""
+        token, launch, store = self.token, self.launch, self.launch.store
+        if token.cancelled:
+            result = ToolResult(False, "the delegation was cancelled before this tool call was made")
+            store.append("tool", {"name": name, "arguments": arguments, "result": result.as_dict()},
+                         phase=RunPhase.PROVING)
+            return result
+        call_id = uuid4().hex
+        store.append("tool_started", {"name": name, "arguments": arguments, "call_id": call_id},
+                     phase=RunPhase.PROVING)
+        try:
+            result = self.tool(name, arguments)
+        except (KeyError, TypeError, ValueError) as error:
+            result = ToolResult(False, f"invalid tool call: {error}")
+        if launch.pushes is not None:
+            # A tool result is a provider boundary: what was pushed since the
+            # last one rides along with it rather than interrupting mid-request.
+            pushed = launch.pushes()
+            if pushed:
+                result = ToolResult(result.ok, f"{result.output}\n\n{render_pushes(pushed)}")
+        store.append("tool", {"name": name, "arguments": arguments, "result": result.as_dict(),
+                              "call_id": call_id}, phase=RunPhase.PROVING)
+        return result
 
     def tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         with self._serial:
@@ -250,11 +276,49 @@ class _WorkerState:
             return ToolResult(False, str(error))
         return ToolResult(result.accepted, result.model_dump_json())
 
+    def start_deadline(self, runtime: ChatRuntime) -> threading.Timer | None:
+        """Cancel a still-running provider when this worker's active-time lease expires."""
+        if self.launch.lease.active_seconds is None:
+            return None
+        # Provider time is spend too: when the lease runs out the runtime is
+        # cancelled, and the result says exhausted rather than completed.
+
+        def expire() -> None:
+            self.deadline_hit = True
+            runtime.cancel()
+
+        deadline = threading.Timer(self.launch.lease.active_seconds, expire)
+        deadline.daemon = True
+        deadline.start()
+        return deadline
+
     def close(self) -> None:
         if self.cas is not None:
             close = getattr(getattr(self.cas, "session", None), "close", None)
             if close is not None:
                 close()
+
+    def write_result(self, status: DelegationState, reason: str | None,
+                     synthesis: str, measured: ResourceUsage) -> WorkerResult:
+        """Persist the execution outcome, findings and optional private change set as one result."""
+        launch, store = self.launch, self.launch.store
+        store.write_json(PurePosixPath("findings.json"), [f.model_dump(mode="json") for f in self.findings])
+        change_set_id = None
+        artifacts: tuple[str, ...] = ("prompt.md", "findings.json", "result.json")
+        if launch.overlay is not None:
+            change_set = launch.overlay.change_set()
+            store.write_json(PurePosixPath("change_set.json"), change_set)
+            change_set_id = change_set.id
+            artifacts = (*artifacts, "change_set.json")
+        result = WorkerResult(
+            delegation_id=launch.delegation_id, status=status, synthesis=synthesis, usage=measured,
+            findings=tuple(f.id for f in self.findings), terminal_reason=reason,
+            artifacts=artifacts, change_set=change_set_id,
+        )
+        store.write_json(PurePosixPath("result.json"), result)
+        store.append("worker.finished", {"status": status.value, "reason": reason,
+                                         "usage": json.loads(measured.model_dump_json())}, phase=RunPhase.PROVING)
+        return result
 
     def retrieve(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         retriever = self.launch.retriever
@@ -293,32 +357,10 @@ def _usage_of(usage: Usage | None, *, exchanges: int, seconds: float) -> Resourc
 
 def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken, *,
                clock: Callable[[], float] = time.monotonic) -> WorkerResult:
+    """Run one fresh conversation and retain explicit execution status and unknown spend."""
     store = launch.store
     state = _WorkerState(launch, token)
     started = clock()
-
-    def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
-        if token.cancelled:
-            result = ToolResult(False, "the delegation was cancelled before this tool call was made")
-            store.append("tool", {"name": name, "arguments": arguments, "result": result.as_dict()},
-                         phase=RunPhase.PROVING)
-            return result
-        call_id = uuid4().hex
-        store.append("tool_started", {"name": name, "arguments": arguments, "call_id": call_id},
-                     phase=RunPhase.PROVING)
-        try:
-            result = state.tool(name, arguments)
-        except (KeyError, TypeError, ValueError) as error:
-            result = ToolResult(False, f"invalid tool call: {error}")
-        if launch.pushes is not None:
-            # A tool result is a provider boundary: what was pushed since the
-            # last one rides along with it rather than interrupting mid-request.
-            pushed = launch.pushes()
-            if pushed:
-                result = ToolResult(result.ok, f"{result.output}\n\n{render_pushes(pushed)}")
-        store.append("tool", {"name": name, "arguments": arguments, "result": result.as_dict(),
-                              "call_id": call_id}, phase=RunPhase.PROVING)
-        return result
 
     def observe(event: dict[str, Any]) -> None:
         store.append("provider", event, phase=RunPhase.PROVING)
@@ -332,27 +374,12 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
     synthesis = ""
     try:
         token.check()
-        if launch.lease.active_seconds is not None and launch.lease.active_seconds <= 0:
-            # Nothing to spend: no provider context is opened for a lease that is already over.
-            raise _NoTime("active_seconds")
-        if launch.lease.provider_calls is not None and launch.lease.provider_calls <= 0:
-            raise _NoTime("provider_calls")
-        opened = open_worker(launch, dispatch, observe)
+        _require_lease(launch.lease)
+        opened = open_worker(launch, state.dispatch, observe)
         store.append("worker.opened", {"context_id": opened.context_id, "model": getattr(opened.runtime, "model", None)},
                      phase=RunPhase.PROVING)
         token.on_cancel(opened.runtime.cancel)
-        if launch.lease.active_seconds is not None:
-            # Provider time is spend too: when the lease runs out the runtime is
-            # cancelled, and the result says exhausted rather than completed.
-            runtime = opened.runtime
-
-            def expire() -> None:
-                state.deadline_hit = True
-                runtime.cancel()
-
-            deadline = threading.Timer(launch.lease.active_seconds, expire)
-            deadline.daemon = True
-            deadline.start()
+        deadline = state.start_deadline(opened.runtime)
         exchanges = 1
         for event in opened.runtime.stream(launch.prompt):
             if event.kind == "reply":
@@ -391,20 +418,13 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
         store.append("worker.close_error", {"error": reason}, phase=RunPhase.PROVING)
     measured = _usage_of(usage, exchanges=exchanges, seconds=max(0.0, clock() - started))
     measured = measured.model_copy(update={"official_checks": state.checks.checks})
-    store.write_json(PurePosixPath("findings.json"), [f.model_dump(mode="json") for f in state.findings])
-    change_set_id = None
-    artifacts: tuple[str, ...] = ("prompt.md", "findings.json", "result.json")
-    if launch.overlay is not None:
-        change_set = launch.overlay.change_set()
-        store.write_json(PurePosixPath("change_set.json"), change_set)
-        change_set_id = change_set.id
-        artifacts = (*artifacts, "change_set.json")
-    result = WorkerResult(
-        delegation_id=launch.delegation_id, status=status, synthesis=synthesis, usage=measured,
-        findings=tuple(f.id for f in state.findings), terminal_reason=reason,
-        artifacts=artifacts, change_set=change_set_id,
-    )
-    store.write_json(PurePosixPath("result.json"), result)
-    store.append("worker.finished", {"status": status.value, "reason": reason,
-                                     "usage": json.loads(measured.model_dump_json())}, phase=RunPhase.PROVING)
-    return result
+    return state.write_result(status, reason, synthesis, measured)
+
+
+def _require_lease(lease: ResourceLease) -> None:
+    """Do not open a provider context for a lease that has already run out."""
+    if lease.active_seconds is not None and lease.active_seconds <= 0:
+        # Nothing to spend: no provider context is opened for a lease that is already over.
+        raise _NoTime("active_seconds")
+    if lease.provider_calls is not None and lease.provider_calls <= 0:
+        raise _NoTime("provider_calls")
