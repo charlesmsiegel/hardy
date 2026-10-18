@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from hardy.algebra import tools as cas_tools
+from hardy.algebra.session import CasSession
 from hardy.app import config as configuration
 from hardy.app.session_builder import SessionBuilder
 from hardy.app.wiring import session_runtime
@@ -113,9 +114,9 @@ class _Reopen:
         self._lock = threading.Lock()
         self.cancelled = False
         self.committed = False
-        self.session: Any = None
+        self.session: CasSession | None = None
 
-    def probing(self, session: Any) -> None:
+    def probing(self, session: CasSession) -> None:
         """The kernel `build_runtime` is about to block on, handed over.
 
         Escalated immediately if the cancel got here first: between this call
@@ -143,13 +144,13 @@ class _Reopen:
             session.escalate()
         return True
 
-    def refuse_if_cancelled(self, cas: Any) -> None:
+    def refuse_if_cancelled(self, cas: cas_tools.CasToolRuntime | None) -> None:
         with self._lock:
             if not self.cancelled:
                 return
         self._refuse(cas)
 
-    def commit(self, cas: Any) -> None:
+    def commit(self, cas: cas_tools.CasToolRuntime | None) -> None:
         """The last check and the point of no return, in one step.
 
         After this returns, `cancel` reports there was nothing to stop and
@@ -164,7 +165,7 @@ class _Reopen:
                 return
         self._refuse(cas)
 
-    def _refuse(self, cas: Any) -> None:
+    def _refuse(self, cas: cas_tools.CasToolRuntime | None) -> None:
         if cas is not None:
             cas.session.close()
         raise ReopenCancelled("the switch was cancelled")

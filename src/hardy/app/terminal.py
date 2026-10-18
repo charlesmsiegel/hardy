@@ -6,18 +6,23 @@ does not construct the workflows or interpret proof evidence itself.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from hardy.app.tui.ports import Choice
+from hardy.app.tui.ports import Choice, Ui
 from hardy.workflows.batch import WARNING
 
+if TYPE_CHECKING:
+    from hardy.formal.contracts import FormalizationProposal
+    from hardy.formal.lean import LeanCheckResult
+    from hardy.workflows.contracts import FaithfulnessVerdict, RunManifest
 
-def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:
+
+def confirm_assumption(ui: Ui) -> Callable[[dict[str, Any]], bool]:
     """The axiom gate, reached from an SDK tool thread.
 
     `MathematicsSession` calls this synchronously from inside a tool call
-    (`chat.py`'s `_tool`, itself dispatched from whichever thread the SDK ran
-    the tool on), so it must not touch the terminal application directly --
+    (the session's dispatcher, reached from whichever thread the SDK ran the
+    tool on), so it must not touch the terminal application directly --
     it goes through `ui.from_thread`, which marshals the prompt onto the
     event loop and blocks this thread for the answer. The details and the
     selector travel together as one prompt, so output is suspended before
@@ -89,7 +94,7 @@ class ConsoleTerminal:
         self,
         *,
         input_fn: Callable[[str], str] = input,
-        output: Callable[[str], Any] = print,
+        output: Callable[[str], object] = print,
     ) -> None:
         self._input = input_fn
         self._output = output
@@ -106,7 +111,7 @@ class ConsoleTerminal:
         )
         return self._input("Type I UNDERSTAND to continue: ").strip() == "I UNDERSTAND"
 
-    def show_formalization(self, proposal: Any, elaboration: Any) -> None:
+    def show_formalization(self, proposal: FormalizationProposal, elaboration: LeanCheckResult) -> None:
         self._output("\nProposed interpretation")
         self._output(proposal.restatement)
         for label, values in (
@@ -136,7 +141,7 @@ class ConsoleTerminal:
     def revision_text(self) -> str:
         return self._input("Describe the required interpretation change: ").strip()
 
-    def show_faithfulness(self, verdict: Any) -> None:
+    def show_faithfulness(self, verdict: FaithfulnessVerdict) -> None:
         """Say what the independent reader said, agreement included.
 
         Printed on a pass as well as a halt: a gate whose only visible output
@@ -171,7 +176,7 @@ class ConsoleTerminal:
                 "formalization that says what you meant."
             )
 
-    def show_result(self, manifest: Any) -> None:
+    def show_result(self, manifest: RunManifest) -> None:
         self._output("\nHardy result")
         self._output(f"Run ID: {manifest.run_id}")
         self._output(f"Phase: {manifest.phase.value}")
