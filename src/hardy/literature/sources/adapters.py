@@ -1,65 +1,21 @@
-"""The contract every source format adapter implements.
+"""Registry and built-in construction for source readers.
 
-An adapter turns one exact artifact's bytes into attributable representations,
-explicit mappings between them, native structural observations and metadata
-assertions. It never mints claims, never decides bibliographic identity, and
-never executes anything it reads. Adding a format means adding an adapter
-behind this protocol; nothing downstream of the representation store learns
-what format produced a span.
+Pure reader contracts live in `adapter_contracts`; they are re-exported here for
+existing callers. Concrete readers depend on those contracts rather than this
+registry. Their optional PDF SDK is still loaded only when extraction asks for it.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Protocol
-
-from .contracts import (
-    DerivedRepresentation,
-    Diagnostic,
-    RepresentationMapping,
-    SourceArtifact,
-    SourceFormat,
-    StructuralObservation,
-)
-
-
-class AdapterUnavailable(RuntimeError):
-    """The adapter's reader is not installed on this machine; nothing was read."""
-
-
-class ExtractionRefused(ValueError):
-    """The input exceeded a bound or could not be read as its format at all."""
-
-
-@dataclass(frozen=True)
-class ExtractionBudget:
-    """Caller ceilings on pages, retained text and native fragment counts."""
-
-    max_pages: int = 5_000
-    max_text_bytes: int = 64 * 1024 * 1024
-    max_fragments: int = 2_000_000
-
-
-@dataclass(frozen=True)
-class ExtractionResult:
-    """One adapter pass's readings and evidence, including disclosed extraction gaps."""
-
-    representations: tuple[tuple[DerivedRepresentation, Mapping[str, bytes]], ...]
-    mappings: tuple[RepresentationMapping, ...] = ()
-    observations: tuple[StructuralObservation, ...] = ()
-    metadata: tuple[tuple[str, str], ...] = ()
-    diagnostics: tuple[Diagnostic, ...] = ()
-
-
-class SourceAdapter(Protocol):
-    """A format reader supplies attributable evidence without deciding identity or claims."""
-
-    name: str
-    version: str
-
-    def handles(self, artifact: SourceArtifact) -> bool: ...
-
-    def extract(self, artifact: SourceArtifact, data: bytes, *, budget: ExtractionBudget) -> ExtractionResult: ...
+from .adapter_contracts import AdapterUnavailable as AdapterUnavailable
+from .adapter_contracts import ExtractionBudget as ExtractionBudget
+from .adapter_contracts import ExtractionRefused as ExtractionRefused
+from .adapter_contracts import ExtractionResult as ExtractionResult
+from .adapter_contracts import SourceAdapter as SourceAdapter
+from .contracts import SourceArtifact, SourceFormat
+from .epub import EpubAdapter
+from .pdf import PdfAdapter
+from .tex import TexAdapter
+from .text import TextAdapter
 
 
 class AdapterRegistry:
@@ -90,10 +46,5 @@ class AdapterRegistry:
 
 
 def default_adapters() -> AdapterRegistry:
-    """Construct built-in readers lazily so their shared protocol can initialize first."""
-    from .epub import EpubAdapter
-    from .pdf import PdfAdapter
-    from .tex import TexAdapter
-    from .text import TextAdapter
-
+    """Construct the built-in registry without loading an optional parser SDK."""
     return AdapterRegistry((PdfAdapter(), TexAdapter(), EpubAdapter(), TextAdapter()))

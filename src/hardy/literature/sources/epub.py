@@ -29,7 +29,7 @@ from urllib.parse import unquote, urlsplit
 from hardy.foundation.values import json_digest
 from hardy.literature import archives
 
-from .adapters import ExtractionBudget, ExtractionRefused, ExtractionResult
+from .adapter_contracts import ExtractionBudget, ExtractionRefused, ExtractionResult
 from .contracts import (
     DerivedRepresentation,
     Diagnostic,

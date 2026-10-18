@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+
 import pytest
 from pdf_helpers import book_pages, build_pdf
 
@@ -20,6 +24,35 @@ from hardy.literature.sources.pdf import PdfAdapter
 
 def library(tmp_path, adapters=None):
     return ManagedLibrary(tmp_path / "library", adapters=adapters, clock=lambda: 1_700_000_000.0)
+
+
+def test_default_registry_keeps_pdf_reader_optional():
+    # A fresh interpreter prevents another test's PDF fixtures from preloading pypdf.
+    program = textwrap.dedent('''
+        import builtins
+        import sys
+        original_import = builtins.__import__
+        def without_pdf(name, *args, **kwargs):
+            if name.split('.')[0] == 'pypdf':
+                raise ImportError('PDF reader deliberately unavailable')
+            return original_import(name, *args, **kwargs)
+        builtins.__import__ = without_pdf
+        from hardy.literature.sources.adapters import AdapterUnavailable, ExtractionBudget, default_adapters
+        from hardy.literature.sources.contracts import SourceArtifact, SourceFormat
+        registry = default_adapters()
+        assert registry.formats() == (SourceFormat.PDF, SourceFormat.TEX_TREE, SourceFormat.EPUB, SourceFormat.HTML, SourceFormat.TEXT)
+        assert 'pypdf' not in sys.modules
+        artifact = SourceArtifact(sha256='a'*64, byte_size=8, format=SourceFormat.PDF,
+                                  media_type='application/pdf', access='private_local', admitted_at='now')
+        try:
+            registry.for_artifact(artifact).extract(artifact, b'%PDF-1.7', budget=ExtractionBudget())
+        except AdapterUnavailable as error:
+            assert 'pypdf is not installed' in str(error)
+        else:
+            raise AssertionError('PDF extraction must report the unavailable optional reader')
+    ''')
+    completed = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_import_admits_extracts_and_proposes_without_grouping(tmp_path):
