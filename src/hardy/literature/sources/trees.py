@@ -22,7 +22,7 @@ import hashlib
 import heapq
 import re
 from bisect import bisect_left, bisect_right
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -115,6 +115,86 @@ def _trim(text: str, start: int, end: int) -> int:
     while end > start and text[end - 1] in " \t\n\f":
         end -= 1
     return end
+
+
+@dataclass(frozen=True)
+class _ContainerLayout:
+    """Heading ancestry and bounds, used together to locate a unit's owner."""
+
+    units: list[Unit]
+    ends: dict[int, int]
+    parents: dict[int, Unit | None]
+    starts: list[int]
+
+    @classmethod
+    def of(cls, text: str, units: list[Unit]) -> _ContainerLayout:
+        containers = [unit for unit in units if unit.kind in CONTAINER_KINDS]
+        ends: dict[int, int] = {}
+        parents: dict[int, Unit | None] = {}
+        stack: list[Unit] = []
+        for unit in containers:
+            while stack and (stack[-1].level or 0) >= (unit.level or 0):
+                closed = stack.pop()
+                ends[id(closed)] = _trim(text, closed.start, unit.start)
+            parents[id(unit)] = stack[-1] if stack else None
+            stack.append(unit)
+        for unit in stack:
+            ends[id(unit)] = _trim(text, unit.start, len(text))
+        return cls(containers, ends, parents, [unit.start for unit in containers])
+
+    def owner_at(self, position: int) -> Unit | None:
+        index = bisect_right(self.starts, position) - 1
+        unit = self.units[index] if index >= 0 else None
+        while unit is not None:
+            if position < max(self.ends[id(unit)], unit.start + 1):
+                return unit
+            unit = self.parents[id(unit)]
+        return None
+
+
+def _uncovered_ranges(text: str, nodes: list[SourceNode], headings: list[Unit]) -> list[tuple[int, int]]:
+    leaves = [node for node in nodes if node.kind not in CONTAINER_KINDS]
+    covered = sorted((node.span.ranges[0].start, node.span.ranges[0].end) for node in leaves)
+    covered += [(node.span.ranges[0].start, node.span.ranges[0].end) for node in nodes
+                if node.kind in CONTAINER_KINDS and node.span.ranges[0].end == node.span.ranges[0].start]
+    occupied = sorted(covered + [(unit.start, unit.end) for unit in headings])
+    position = 0
+    gaps: list[tuple[int, int]] = []
+    for start, end in occupied:
+        if start > position and text[position:start].strip():
+            gaps.append((position, start))
+        position = max(position, end)
+    if position < len(text) and text[position:].strip():
+        gaps.append((position, len(text)))
+    return gaps
+
+
+def _reading_order(nodes: list[SourceNode]) -> list[SourceNode]:
+    nodes.sort(key=lambda node: node.span.ranges[0].start)
+    ordered: list[SourceNode] = []
+    counters: dict[str | None, int] = {}
+    for node in nodes:
+        order = counters.get(node.parent, 0)
+        counters[node.parent] = order + 1
+        ordered.append(node.model_copy(update={"order": order}) if node.order != order else node)
+    return ordered
+
+
+def _numbering_gaps(numbers: Iterable[str]) -> list[Diagnostic]:
+    groups: dict[str, list[int]] = {}
+    for number in numbers:
+        head, _, tail = number.rpartition(".")
+        if tail.isdigit():
+            groups.setdefault(head, []).append(int(tail))
+    diagnostics: list[Diagnostic] = []
+    for head, values in groups.items():
+        values.sort()
+        for a, b in zip(values, values[1:], strict=False):
+            if b > a + 1:
+                prefix = f"{head}." if head else ""
+                diagnostics.append(Diagnostic(code="numbering_gap", severity="info",
+                                              detail=f"numbering jumps from {prefix}{a} to {prefix}{b}; units between were not recovered, which is not evidence they are absent"))
+    return diagnostics
 
 
 def node_record(
@@ -251,28 +331,7 @@ def build_tree(
     units.sort(key=lambda u: (u.start, 0 if u.kind in CONTAINER_KINDS else 1))
 
     # 3. Container spans: a heading runs to the next heading of the same or a higher level.
-    containers = [u for u in units if u.kind in CONTAINER_KINDS]
-    container_end: dict[int, int] = {}
-    container_parent: dict[int, Unit | None] = {}
-    stack: list[Unit] = []
-    for unit in containers:
-        while stack and (stack[-1].level or 0) >= (unit.level or 0):
-            closed = stack.pop()
-            container_end[id(closed)] = _trim(text, closed.start, unit.start)
-        container_parent[id(unit)] = stack[-1] if stack else None
-        stack.append(unit)
-    for unit in stack:
-        container_end[id(unit)] = _trim(text, unit.start, len(text))
-    container_starts = [u.start for u in containers]
-
-    def container_of(position: int) -> Unit | None:
-        index = bisect_right(container_starts, position) - 1
-        unit = containers[index] if index >= 0 else None
-        while unit is not None:
-            if position < max(container_end[id(unit)], unit.start + 1):
-                return unit
-            unit = container_parent[id(unit)]
-        return None
+    containers = _ContainerLayout.of(text, units)
 
     # 4. Nodes with content-derived identities.
     nodes: list[SourceNode] = []
@@ -293,45 +352,25 @@ def build_tree(
     for unit in units:
         if unit.kind not in CONTAINER_KINDS:
             continue
-        parent_unit = container_parent[id(unit)]
-        make_node(unit, ids.get(id(parent_unit)) if parent_unit else None, unit.start, container_end[id(unit)])
+        parent_unit = containers.parents[id(unit)]
+        make_node(unit, ids.get(id(parent_unit)) if parent_unit else None, unit.start, containers.ends[id(unit)])
     for unit in units:
         if unit.kind in CONTAINER_KINDS:
             continue
-        owner = container_of(unit.start)
+        owner = containers.owner_at(unit.start)
         make_node(unit, ids.get(id(owner)) if owner else None, unit.start, unit.end)
 
     # 5. Unknown regions: text no unit covers, inside each container and at top level.
-    leaves = [n for n in nodes if n.kind not in CONTAINER_KINDS]
-    covered = sorted((n.span.ranges[0].start, n.span.ranges[0].end) for n in leaves)
-    covered += [(n.span.ranges[0].start, n.span.ranges[0].end) for n in nodes if n.kind in CONTAINER_KINDS and n.span.ranges[0].end == n.span.ranges[0].start]
-    heading_lines = [(u.start, u.end) for u in containers]
-    occupied = sorted(covered + heading_lines)
-    position = 0
-    gaps: list[tuple[int, int]] = []
-    for start, end in occupied:
-        if start > position and text[position:start].strip():
-            gaps.append((position, start))
-        position = max(position, end)
-    if position < len(text) and text[position:].strip():
-        gaps.append((position, len(text)))
-    for start, end in gaps:
+    for start, end in _uncovered_ranges(text, nodes, containers.units):
         while start < end and text[start] in " \t\n\f":
             start += 1
         end = _trim(text, start, end)
         if start >= end:
             continue
-        owner = container_of(start)
+        owner = containers.owner_at(start)
         unit = Unit(kind=NodeKind.UNKNOWN, start=start, end=end, boundary="high")
         make_node(unit, ids.get(id(owner)) if owner else None, start, end)
-    nodes.sort(key=lambda n: n.span.ranges[0].start)
-    reordered: list[SourceNode] = []
-    counters = {}
-    for node in nodes:
-        order = counters.get(node.parent, 0)
-        counters[node.parent] = order + 1
-        reordered.append(node.model_copy(update={"order": order}) if node.order != order else node)
-    nodes = reordered
+    nodes = _reading_order(nodes)
 
     # 6. Edges: containment, proof_of, source_refers_to.
     edges: list[SourceEdge] = [SourceEdge(kind=SourceEdgeKind.CONTAINS, source=n.parent, target=n.id) for n in nodes if n.parent]
@@ -404,18 +443,7 @@ def build_tree(
                 edges.append(SourceEdge(kind=SourceEdgeKind.SOURCE_REFERS_TO, source=holder.id, target=target.id, anchor=o.anchor))
 
     # 7. Numbering gaps are diagnostics.
-    groups: dict[str, list[int]] = {}
-    for number in by_number:
-        head, _, tail = number.rpartition(".")
-        if tail.isdigit():
-            groups.setdefault(head, []).append(int(tail))
-    for head, values in groups.items():
-        values.sort()
-        for a, b in zip(values, values[1:], strict=False):
-            if b > a + 1:
-                prefix = f"{head}." if head else ""
-                diagnostics.append(Diagnostic(code="numbering_gap", severity="info",
-                                              detail=f"numbering jumps from {prefix}{a} to {prefix}{b}; units between were not recovered, which is not evidence they are absent"))
+    diagnostics.extend(_numbering_gaps(by_number))
 
     seed = [artifact.sha256, BUILDER, builder_version, [n.model_dump(mode="json") for n in nodes], [e.model_dump(mode="json") for e in edges]]
     # Preserve the historical v1 identity protocol. Current trees include
