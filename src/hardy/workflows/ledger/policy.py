@@ -22,6 +22,8 @@ from hardy.workflows.ledger.contracts import (
     CitationContract,
     EvidenceKind,
     EvidenceRef,
+    HypothesisMapping,
+    LedgerRecord,
     MathematicalContext,
     Obligation,
     ObligationKind,
@@ -179,55 +181,76 @@ class LedgerPolicy:
             if isinstance(record, MathematicalContext) and previous is not None and record != previous:
                 raise ValueError("mathematical context is immutable; extend or fork it")
             if isinstance(record, ProjectItem) and isinstance(previous, ProjectItem):
-                if record.kind != previous.kind:
-                    raise ValueError("item kind cannot silently change mathematical identity")
-                if record.context != previous.context or record.declaration != previous.declaration:
-                    raise ValueError("context/declaration change requires a distinct item and transport")
-                if previous.kind == ProjectItemKind.CONJECTURE and record.statement != previous.statement:
-                    raise ValueError("corrected conjecture requires a distinct superseding item")
+                self._item_revision(previous, record)
             if isinstance(record, Scope):
                 self._check_scope(after, record)
                 self._authorize_scope(previous if isinstance(previous, Scope) else None, record, snapshot=after)
             if isinstance(record, Obligation):
-                self._check_scope(after, record.scope)
-                if after.head(record.scope.id).ref != record.scope.ref:
-                    raise ValueError("obligation carries stale scope")
-                if isinstance(previous, Obligation) and (
-                    previous.item != record.item or previous.kind != record.kind
-                    or previous.context != record.context
-                ):
-                    raise ValueError("obligation subject, kind and context cannot be relabelled")
-                if record.resolution and record.resolution.accepted_by:
-                    self._check_resolution(after, record.resolution, frozenset())
+                self._validate_obligation(after, previous, record)
             if isinstance(record, Resolution) and record.accepted_by:
                 self._check_resolution(after, record, frozenset())
             if isinstance(record, Relation) and isinstance(previous, Relation):
-                semantic = DEPENDENCIES | TRANSPORT | {RelationKind.INTERPRETS, RelationKind.REFINES, RelationKind.SUPPORTS}
-                if (record.source != previous.source and (record.kind in semantic or previous.kind in semantic)
-                        and after.head(record.source.id).ref != record.source):
-                    raise ValueError("semantic relation source must advance to the current source revision")
-                if ((record.kind in semantic or previous.kind in semantic)
-                        and record.source.id != previous.source.id):
-                    raise ValueError("semantic relation must preserve its stable source identity")
-                if (record.source == previous.source and (record.kind in semantic or previous.kind in semantic)
-                        and any(getattr(record, field) != getattr(previous, field)
-                                for field in ("kind", "target", "justification", "mappings"))):
-                    raise ValueError("semantic relation replacement requires an explicit source revision")
-            if isinstance(record, Relation) and record.kind == RelationKind.SUPPORTS:
-                source, target = after.get(record.source), after.get(record.target)
-                if isinstance(source, ProjectItem) and source.kind == ProjectItemKind.ARGUMENT:
-                    if (after.head(source.id).ref != source.ref or not isinstance(target, ProjectItem)
-                            or source.context != target.context):
-                        raise ValueError("argument conclusion requires its current exact source and context")
-                    conclusions = {edge.target for edge in after.current(Relation)
-                                   if edge.source == source.ref and edge.kind == RelationKind.SUPPORTS}
-                    if len(conclusions) != 1:
-                        raise ValueError("a changed argument conclusion requires an explicit source revision")
-            if isinstance(record, Relation) and record.kind == RelationKind.INTERPRETS:
-                source, target = after.get(record.source), after.get(record.target)
-                if not (isinstance(source, ProjectItem) and source.kind == ProjectItemKind.REPRESENTATION
-                        and isinstance(target, ProjectItem) and target.kind == ProjectItemKind.CONCEPT):
-                    raise ValueError("interprets must link a representation to a distinct concept")
+                self._relation_revision(after, previous, record)
+            if isinstance(record, Relation):
+                self._relation_endpoints(after, record)
+
+    def _validate_obligation(self, after: LedgerSnapshot, previous: LedgerRecord | None,
+                             record: Obligation) -> None:
+        """A changed obligation preserves its use identity and rechecks any acceptance."""
+        self._check_scope(after, record.scope)
+        if after.head(record.scope.id).ref != record.scope.ref:
+            raise ValueError("obligation carries stale scope")
+        if isinstance(previous, Obligation) and (
+            previous.item != record.item or previous.kind != record.kind
+            or previous.context != record.context
+        ):
+            raise ValueError("obligation subject, kind and context cannot be relabelled")
+        if record.resolution and record.resolution.accepted_by:
+            self._check_resolution(after, record.resolution, frozenset())
+
+    @staticmethod
+    def _item_revision(previous: ProjectItem, record: ProjectItem) -> None:
+        """Keep mathematical identity distinct from revisions of research state."""
+        if record.kind != previous.kind:
+            raise ValueError("item kind cannot silently change mathematical identity")
+        if record.context != previous.context or record.declaration != previous.declaration:
+            raise ValueError("context/declaration change requires a distinct item and transport")
+        if previous.kind == ProjectItemKind.CONJECTURE and record.statement != previous.statement:
+            raise ValueError("corrected conjecture requires a distinct superseding item")
+
+    @staticmethod
+    def _relation_revision(after: LedgerSnapshot, previous: Relation, record: Relation) -> None:
+        """Semantic edge replacement advances the same stable source explicitly."""
+        semantic = DEPENDENCIES | TRANSPORT | {RelationKind.INTERPRETS, RelationKind.REFINES, RelationKind.SUPPORTS}
+        if (record.source != previous.source and (record.kind in semantic or previous.kind in semantic)
+                and after.head(record.source.id).ref != record.source):
+            raise ValueError("semantic relation source must advance to the current source revision")
+        if ((record.kind in semantic or previous.kind in semantic)
+                and record.source.id != previous.source.id):
+            raise ValueError("semantic relation must preserve its stable source identity")
+        if (record.source == previous.source and (record.kind in semantic or previous.kind in semantic)
+                and any(getattr(record, field) != getattr(previous, field)
+                        for field in ("kind", "target", "justification", "mappings"))):
+            raise ValueError("semantic relation replacement requires an explicit source revision")
+
+    @staticmethod
+    def _relation_endpoints(after: LedgerSnapshot, record: Relation) -> None:
+        """Arguments have one current conclusion; interpretations connect representation to concept."""
+        if record.kind == RelationKind.SUPPORTS:
+            source, target = after.get(record.source), after.get(record.target)
+            if isinstance(source, ProjectItem) and source.kind == ProjectItemKind.ARGUMENT:
+                if (after.head(source.id).ref != source.ref or not isinstance(target, ProjectItem)
+                        or source.context != target.context):
+                    raise ValueError("argument conclusion requires its current exact source and context")
+                conclusions = {edge.target for edge in after.current(Relation)
+                               if edge.source == source.ref and edge.kind == RelationKind.SUPPORTS}
+                if len(conclusions) != 1:
+                    raise ValueError("a changed argument conclusion requires an explicit source revision")
+        if record.kind == RelationKind.INTERPRETS:
+            source, target = after.get(record.source), after.get(record.target)
+            if not (isinstance(source, ProjectItem) and source.kind == ProjectItemKind.REPRESENTATION
+                    and isinstance(target, ProjectItem) and target.kind == ProjectItemKind.CONCEPT):
+                raise ValueError("interprets must link a representation to a distinct concept")
 
     def accept(self, snapshot: LedgerSnapshot, resolution: Resolution,
                decision: ArtifactRef) -> Resolution:
@@ -360,6 +383,13 @@ class LedgerPolicy:
                      else self._read_evidence(reference))
         except Exception as error:
             raise ValueError("capability evidence reader failed") from error
+        self._check_evidence_use(value, reference, obligation, hypothesis=hypothesis)
+        return value
+
+    @staticmethod
+    def _check_evidence_use(value: AuthenticatedEvidence | None, reference: EvidenceRef,
+                            obligation: Obligation, *, hypothesis: str | None) -> None:
+        """Bind the owner's outcome to this exact subject, hypothesis and allowed assumptions."""
         if not isinstance(value, AuthenticatedEvidence) or (
             value.reference != reference or reference.subject != obligation.item
             or value.scope != obligation.scope.ref or value.context != obligation.context
@@ -376,7 +406,6 @@ class LedgerPolicy:
         allowed = set(obligation.scope.allowed_background + obligation.scope.allowed_interfaces)
         if not set(value.used_assumptions).issubset(allowed):
             raise ValueError("formal evidence used assumptions outside admitted scope")
-        return value
 
     def _check_resolution(self, snapshot: LedgerSnapshot, resolution: Resolution,
                           visiting: frozenset[VersionRef]) -> None:
@@ -394,18 +423,7 @@ class LedgerPolicy:
         subject = snapshot.get(obligation.item)
         if not isinstance(subject, ProjectItem) or subject.context != obligation.context:
             raise ValueError("obligation does not match subject context")
-        proposal = Resolution.model_validate({**resolution.model_dump(),
-                                             "accepted_by": None, "policy_digest": None})
-        if self._read_decision is None:
-            raise ValueError("acceptance decision authentication is unavailable")
-        try:
-            decision = self._read_decision(resolution.accepted_by)
-        except Exception as error:
-            raise ValueError("acceptance decision reader failed") from error
-        expected = AcceptanceDecision(proposal.ref, obligation.ref, subject.ref,
-                                      obligation.scope.ref, obligation.context, self.digest)
-        if decision != expected:
-            raise ValueError("acceptance decision does not match exact proposal and policy")
+        self._check_decision(resolution, obligation, subject)
         outcomes = {self._evidence(ref, obligation, snapshot=snapshot).outcome for ref in resolution.evidence}
         # Generic acquisition can finish through a separately authenticated
         # typed proof/definition/interface, without inventing a paper citation.
@@ -414,6 +432,20 @@ class LedgerPolicy:
                    and (value.id, value.item, value.kind, value.scope, value.context)
                    == (obligation.id, obligation.item, obligation.kind, obligation.scope, obligation.context)}
         relations = LedgerGraph(snapshot).relations
+        acquired_local = self._acquired_local(snapshot, resolution, obligation, subject, visiting,
+                                               history=history, relations=relations)
+        if not acquired_local and not _REQUIRED[obligation.kind].issubset(outcomes):
+            raise ValueError("illegal evidence combination for obligation category")
+        if not acquired_local and obligation.kind in {ObligationKind.CHECK_CITATION, ObligationKind.ACQUIRE_PREREQUISITE}:
+            self._citation(snapshot, obligation, visiting)
+        self._transport(snapshot, subject, obligation, visiting)
+        self._check_dependencies(snapshot, obligation, visiting,
+                                 history=history | {subject.ref}, relations=relations)
+
+    def _acquired_local(self, snapshot: LedgerSnapshot, resolution: Resolution,
+                        obligation: Obligation, subject: ProjectItem, visiting: frozenset[VersionRef],
+                        *, history: set[VersionRef], relations: tuple[Relation, ...]) -> bool:
+        """A typed child may establish acquisition only with the very same exact evidence."""
         acquired_local = False
         if obligation.kind == ObligationKind.ACQUIRE_PREREQUISITE:
             for relation in relations:
@@ -431,13 +463,14 @@ class LedgerPolicy:
                         and self._resolved(snapshot, child.ref, obligation.scope, visiting)):
                     acquired_local = True
                     break
-        if not acquired_local and not _REQUIRED[obligation.kind].issubset(outcomes):
-            raise ValueError("illegal evidence combination for obligation category")
-        if not acquired_local and obligation.kind in {ObligationKind.CHECK_CITATION, ObligationKind.ACQUIRE_PREREQUISITE}:
-            self._citation(snapshot, obligation, visiting)
-        self._transport(snapshot, subject, obligation, visiting)
+        return acquired_local
+
+    def _check_dependencies(self, snapshot: LedgerSnapshot, obligation: Obligation,
+                             visiting: frozenset[VersionRef], *, history: set[VersionRef],
+                             relations: tuple[Relation, ...]) -> None:
+        """Require every dependency, except the obligation's own first completion."""
         for relation in relations:
-            if relation.kind not in DEPENDENCIES or relation.source not in history | {subject.ref}:
+            if relation.kind not in DEPENDENCIES or relation.source not in history:
                 continue
             blocker = snapshot.get(relation.target)
             if relation.kind == RelationKind.BLOCKED_BY and isinstance(blocker, Obligation):
@@ -451,6 +484,22 @@ class LedgerPolicy:
                 ready = self._premise(snapshot, relation.target, obligation.scope, obligation.context, visiting)
             if not ready:
                 raise ValueError("resolution depends on an unestablished premise")
+
+    def _check_decision(self, resolution: Resolution, obligation: Obligation,
+                        subject: ProjectItem) -> None:
+        """Require the owner's decision for this exact unaccepted proposal and policy."""
+        proposal = Resolution.model_validate({**resolution.model_dump(),
+                                             "accepted_by": None, "policy_digest": None})
+        if self._read_decision is None:
+            raise ValueError("acceptance decision authentication is unavailable")
+        try:
+            decision = self._read_decision(resolution.accepted_by)
+        except Exception as error:
+            raise ValueError("acceptance decision reader failed") from error
+        expected = AcceptanceDecision(proposal.ref, obligation.ref, subject.ref,
+                                      obligation.scope.ref, obligation.context, self.digest)
+        if decision != expected:
+            raise ValueError("acceptance decision does not match exact proposal and policy")
 
     @staticmethod
     def _contexts(snapshot: LedgerSnapshot, context: VersionRef | None) -> tuple[MathematicalContext, ...]:
@@ -486,6 +535,12 @@ class LedgerPolicy:
             return self._completed(snapshot, ref, scope, context, visiting)
         if not isinstance(value, ProjectItem):
             return False
+        return self._item_premise(snapshot, value, scope, context, visiting)
+
+    def _item_premise(self, snapshot: LedgerSnapshot, value: ProjectItem, scope: Scope,
+                      context: VersionRef | None, visiting: frozenset[VersionRef]) -> bool:
+        """Use declarations only in their lineage, and results only through current acceptance."""
+        ref = value.ref
         self._current_scope(snapshot, scope)
         contexts = self._contexts(snapshot, context)
         if value.declaration is not None:
@@ -598,21 +653,27 @@ class LedgerPolicy:
             if set(mappings) != set(citation.source_hypotheses):
                 raise ValueError("citation hypotheses are incompletely mapped")
             for hypothesis, mapping in mappings.items():
-                if mapping.obligation is not None:
-                    if not self._resolved(snapshot, mapping.obligation, obligation.scope, visiting,
-                                          kind=ObligationKind.DISCHARGE_CITATION_HYPOTHESES):
-                        raise ValueError("citation hypothesis discharge is unresolved")
-                    discharge = snapshot.head(mapping.obligation.id)
-                    if not isinstance(discharge, Obligation) or discharge.resolution is None or (
-                        discharge.item != obligation.item or discharge.context != obligation.context
-                    ) or not any(
-                        (checked := self._evidence(ref, discharge, snapshot=snapshot)).outcome == "kernel_proof"
-                        and checked.hypothesis == hypothesis
-                        for ref in discharge.resolution.evidence
-                    ):
-                        raise ValueError("citation discharge proves a different subject or hypothesis")
-                elif not mapping.evidence or not any(
-                    self._evidence(ref, obligation, hypothesis=hypothesis, snapshot=snapshot).outcome == "kernel_proof"
-                    for ref in mapping.evidence
-                ):
-                    raise ValueError("citation hypothesis requires authenticated discharge")
+                self._citation_hypothesis(snapshot, obligation, hypothesis, mapping, visiting)
+
+    def _citation_hypothesis(self, snapshot: LedgerSnapshot, obligation: Obligation,
+                             hypothesis: str, mapping: HypothesisMapping,
+                             visiting: frozenset[VersionRef]) -> None:
+        """Authenticate the exact premise, whether proved directly or by a recorded child."""
+        if mapping.obligation is not None:
+            if not self._resolved(snapshot, mapping.obligation, obligation.scope, visiting,
+                                  kind=ObligationKind.DISCHARGE_CITATION_HYPOTHESES):
+                raise ValueError("citation hypothesis discharge is unresolved")
+            discharge = snapshot.head(mapping.obligation.id)
+            if not isinstance(discharge, Obligation) or discharge.resolution is None or (
+                discharge.item != obligation.item or discharge.context != obligation.context
+            ) or not any(
+                (checked := self._evidence(ref, discharge, snapshot=snapshot)).outcome == "kernel_proof"
+                and checked.hypothesis == hypothesis
+                for ref in discharge.resolution.evidence
+            ):
+                raise ValueError("citation discharge proves a different subject or hypothesis")
+        elif not mapping.evidence or not any(
+            self._evidence(ref, obligation, hypothesis=hypothesis, snapshot=snapshot).outcome == "kernel_proof"
+            for ref in mapping.evidence
+        ):
+            raise ValueError("citation hypothesis requires authenticated discharge")
