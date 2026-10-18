@@ -5,12 +5,12 @@ from __future__ import annotations
 import argparse
 import dataclasses
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from hardy.algebra import tools as cas_tools
 from hardy.app import config as configuration
 from hardy.app.projects import ProjectOpener
+from hardy.app.session_builder import SessionBuilder
 from hardy.app.wiring import session_runtime
 from hardy.formal import search as search_tools
 from hardy.workflows import layout
@@ -92,39 +92,18 @@ def _launch(
     # condition the launch established.
     launch = {"fresh_thread": getattr(args, "fresh_thread", False), "detail": ""}
 
-    def worker_cas(cwd: Path):
-        """A kernel of its own for one background worker, logged beside its artifacts."""
-        runtime, _detail = cas_tools.build_runtime(
-            backend_name=config.cas_backend, command=config.cas_command, limits=config.limits,
-            log_path=cwd / "cells.jsonl", cwd=cwd,
-        )
-        return runtime
+    builder = SessionBuilder(config, cas, cas_detail, search, search_detail)
 
     def build(confirm: Callable[[dict[str, Any]], bool], *, require_existing: bool = False) -> MathematicsSession:
         fresh = launch["fresh_thread"]
         launch["fresh_thread"] = False
         try:
-            session = MathematicsSession(
-                config.layout.problem,
-                session_runtime(config),
-                config.lean_command,
-                config.latex_command,
+            session = builder.build(
                 confirm,
-                lean_project=config.lean_project,
-                lean_timeout=config.lean_timeout,
-                cas=cas,
-                cas_detail=cas_detail,
-                search=search,
-                search_detail=search_detail,
-                project_context=config.project_context,
-                context_window=config.context_window,
                 fresh_thread=fresh,
-                limits=config.limits,
-                delegation_slots=config.delegation_workers,
-                detach_after=config.compute_detach_seconds,
-                cas_factory=worker_cas,
-                chat=config.chat,
                 require_existing=require_existing,
+                make_session=MathematicsSession,
+                make_runtime=session_runtime,
             )
         except BaseException:
             launch["fresh_thread"] = fresh
