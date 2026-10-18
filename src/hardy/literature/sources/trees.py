@@ -69,6 +69,8 @@ class TreeError(ValueError):
 
 @dataclass(frozen=True)
 class Unit:
+    """A recovered structural boundary before artifact-bound node identity is assigned."""
+
     kind: NodeKind
     start: int
     end: int
@@ -615,6 +617,8 @@ def _edge_problems(edge: SourceEdge, by_id: Mapping[str, SourceNode]) -> list[Di
 
 
 class TreeStore:
+    """Preserve admitted tree versions and journal retrieval preferences separately."""
+
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
         self._journal = Journal(self.root / "journal", types=JOURNAL_TYPES)
@@ -634,6 +638,7 @@ class TreeStore:
         return self.get(tree.artifact_sha256, tree.id)
 
     def get(self, artifact_sha256: str, tree_id: str) -> SourceTree:
+        """Load one immutable tree record, refusing an artifact or tree identity mismatch."""
         try:
             tree = SourceTree.model_validate_json(read_text(self.root, f"{artifact_sha256}/{tree_id}.json"))
         except FileNotFoundError:
@@ -645,6 +650,7 @@ class TreeStore:
         return tree
 
     def list(self, artifact_sha256: str) -> tuple[SourceTree, ...]:
+        """Recorded trees in version, build-time and id order, including superseded versions."""
         directory = self.root / artifact_sha256
         if not directory.is_dir() or directory.is_symlink():
             return ()
@@ -655,9 +661,11 @@ class TreeStore:
         return self.get(artifact_sha256, tree_id).node(node_id)
 
     def revision(self) -> int:
+        """Concurrency token for preference and correspondence decisions in the shared journal."""
         return self._journal.read().revision
 
     def preferred(self, artifact_sha256: str) -> SourceTree | None:
+        """The last journaled preference, falling back to the latest recorded tree."""
         chosen = None
         for record in self._journal.read().of(TreePreference):
             if record.artifact_sha256 == artifact_sha256:
@@ -672,6 +680,7 @@ class TreeStore:
         self._journal.append([TreePreference(artifact_sha256=artifact_sha256, tree=tree_id, reason=reason)], expected_revision=expected_revision)
 
     def correspondences(self, artifact_sha256: str) -> tuple[SourceCorrespondence, ...]:
+        """Recorded cross-source relations naming this artifact on either side."""
         return tuple(r for r in self._journal.read().of(SourceCorrespondence) if artifact_sha256 in (r.left_artifact, r.right_artifact))
 
     def add_correspondence(self, record: SourceCorrespondence, *, expected_revision: int) -> None:
@@ -680,6 +689,7 @@ class TreeStore:
         self._journal.append([record], expected_revision=expected_revision, validate=_validate_correspondence)
 
     def observations_digest(self, observations: tuple[StructuralObservation, ...]) -> str:
+        """Digest the supplied observation records in their exact order."""
         return json_digest([o.model_dump(mode="json") for o in observations])
 
 

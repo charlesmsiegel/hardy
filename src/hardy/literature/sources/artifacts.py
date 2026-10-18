@@ -57,6 +57,8 @@ class ImportRefused(ArtifactError):
 
 @dataclass(frozen=True)
 class ImportRequest:
+    """One bounded bytes-or-path admission request, with provenance and access policy."""
+
     data: bytes | None = None
     path: Path | None = None
     original_name: str | None = None
@@ -69,6 +71,8 @@ class ImportRequest:
 
 @dataclass(frozen=True)
 class ImportOutcome:
+    """The admitted identity and this import's provenance, including prior-copy reuse."""
+
     artifact: SourceArtifact
     provenance: ImportProvenance
     reused: bool
@@ -110,6 +114,8 @@ def _stamp(when: float) -> str:
 
 
 class ArtifactStore:
+    """Admit exact managed bytes and distinguish missing copies from digest corruption."""
+
     def __init__(self, root: Path, *, clock: Callable[[], float] = time.time) -> None:
         self.root = Path(root)
         self._clock = clock
@@ -121,6 +127,7 @@ class ArtifactStore:
         return self.root / sha256
 
     def holds(self, sha256: str) -> bool:
+        """Whether record and content files exist here; this does not verify their bytes."""
         return (self._dir(sha256) / RECORD).is_file() and (self._dir(sha256) / CONTENT).is_file()
 
     def stored(self) -> tuple[str, ...]:
@@ -138,6 +145,7 @@ class ArtifactStore:
         return (self._dir(sha256) / RECORD).is_file()
 
     def record(self, sha256: str) -> SourceArtifact:
+        """Load identity metadata even when its source bytes are unavailable."""
         if not self.known(sha256):
             raise ArtifactError(f"artifact {sha256} is unavailable in this library")
         try:
@@ -149,6 +157,7 @@ class ArtifactStore:
         return record
 
     def read(self, sha256: str) -> bytes:
+        """Read managed content only after its availability check succeeds."""
         availability = self.availability(sha256)
         if availability.status != "available":
             raise ArtifactError(f"artifact {sha256} is {availability.status}: {availability.detail}")
@@ -164,6 +173,7 @@ class ArtifactStore:
                 info.st_size, info.st_mtime_ns, change_token(guard.directory / name, info))
 
     def availability(self, sha256: str) -> ArtifactAvailability:
+        """Verify stored content against its digest, reusing results only with a reliable change token."""
         if not self.holds(sha256):
             self._verified.pop(sha256, None)
             return ArtifactAvailability(sha256=sha256, status="unavailable", detail="no managed copy of these bytes on this machine")
@@ -191,6 +201,7 @@ class ArtifactStore:
         return result
 
     def provenance(self, sha256: str) -> tuple[ImportProvenance, ...]:
+        """Recorded import origins in stable filename order, without revisiting those origins."""
         directory = self._dir(sha256) / PROVENANCE_DIR
         if not directory.is_dir() or directory.is_symlink():
             return ()
@@ -204,6 +215,7 @@ class ArtifactStore:
     # --- importing ----------------------------------------------------------
 
     def import_bytes(self, request: ImportRequest) -> ImportOutcome:
+        """Admit or restore one digest under its lock, tightening policy on repeat imports."""
         data = self._bounded_input(request)
         sha256 = hashlib.sha256(data).hexdigest()
         guard, name = guard_for(self.root, f".locks/{sha256}.lock", create=True)

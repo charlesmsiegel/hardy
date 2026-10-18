@@ -40,11 +40,14 @@ class IndexHit(FrozenModel):
 
 
 class SourceIndex:
+    """Rebuildable statement discovery whose hits still name their authoritative source records."""
+
     def __init__(self, library: ManagedLibrary) -> None:
         self.library = library
         self.directory = library.root / "index"
 
     def rebuild(self) -> str:
+        """Index preferred trees, retaining source identities when their text is unavailable."""
         entries: list[IndexEntry] = []
         for sha in self.library.artifacts.stored():
             tree = self.library.trees.preferred(sha)
@@ -69,12 +72,14 @@ class SourceIndex:
         return digest
 
     def digest(self) -> str | None:
+        """The stored index digest, or none when the index is absent or invalid JSON."""
         try:
             return json.loads(read_text(self.library.root, f"index/{FILE}")).get("digest")
         except (FileNotFoundError, ValueError):
             return None
 
     def entries(self) -> tuple[IndexEntry, ...]:
+        """Recorded index entries, without replacing a read of their source tree."""
         try:
             payload = json.loads(read_text(self.library.root, f"index/{FILE}"))
         except FileNotFoundError:
@@ -96,6 +101,7 @@ class SourceIndex:
         return tuple(hits[:limit])
 
     def clear(self) -> None:
+        """Discard the rebuildable index without touching its source records."""
         path = self.directory / FILE
         if path.is_file():
             path.unlink()

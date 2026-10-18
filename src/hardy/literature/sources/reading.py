@@ -99,6 +99,8 @@ class _Loaded:
 
 
 class SourceReader:
+    """Deliver bounded, attributed readings and disclose unavailable or fuzzy results."""
+
     def __init__(self, library: ManagedLibrary, *, max_characters: int = 8_192) -> None:
         self.library = library
         self.max_characters = max_characters
@@ -121,6 +123,7 @@ class SourceReader:
     # --- navigation ---------------------------------------------------------
 
     def source_map(self, sha256: str, *, depth: int = 2, max_nodes: int = 200, tree: str | None = None) -> SourceMap:
+        """A bounded structural outline with explicit counts and truncation status."""
         try:
             loaded = self._load(sha256, tree)
         except SourceUnavailable as error:
@@ -155,12 +158,14 @@ class SourceReader:
         )
 
     def list_children(self, sha256: str, node: str, *, tree: str | None = None) -> tuple[SourceNode, ...]:
+        """Immediate recorded children in sibling order, without inferring omitted units."""
         return self._load(sha256, tree).tree.children(node)
 
     def find_statements(
         self, sha256: str, *, kinds: tuple[NodeKind, ...] = (), number: str | None = None, query: str | None = None,
         limit: int = 50, tree: str | None = None, restrict: frozenset[str] | None = None,
     ) -> tuple[SourceNode, ...]:
+        """Statement nodes satisfying kind, number, text and optional node-id restrictions."""
         loaded = self._load(sha256, tree)
         words = {w.lower() for w in WORD.findall(query or "")}
         found = []
@@ -194,6 +199,7 @@ class SourceReader:
         return tuple(found)
 
     def search_text(self, sha256: str, query: str, *, limit: int = 20, tree: str | None = None, restrict: frozenset[str] | None = None) -> tuple[SearchHit, ...]:
+        """Rank exact ids and printed aliases ahead of explicitly labelled word matches."""
         loaded = self._load(sha256, tree)
         hits: list[SearchHit] = []
         stripped = query.strip()
@@ -232,6 +238,7 @@ class SourceReader:
         return self._deliver(loaded, record.span, node=record.id, start=start)
 
     def read_statement(self, sha256: str, node: str, *, tree: str | None = None) -> Delivery:
+        """Read the recorded statement span, falling back to the node's full source span."""
         try:
             loaded = self._load(sha256, tree)
             record = loaded.tree.node(node)
@@ -240,6 +247,7 @@ class SourceReader:
         return self._deliver(loaded, record.statement_span or record.span, node=record.id)
 
     def proof_of(self, sha256: str, node: str, *, tree: str | None = None) -> str | None:
+        """The first associated proof id, or the node itself when it already is a proof."""
         loaded = self._load(sha256, tree)
         try:
             record = loaded.tree.node(node)
@@ -250,6 +258,7 @@ class SourceReader:
         return next((e.source for e in loaded.tree.edges if e.kind is SourceEdgeKind.PROOF_OF and e.target == node), None)
 
     def read_proof(self, sha256: str, node: str, *, start: int = 0, tree: str | None = None) -> Delivery:
+        """Read a recorded proof association; absence does not establish that no proof exists."""
         try:
             loaded = self._load(sha256, tree)
             statement = loaded.tree.node(node)
@@ -265,6 +274,7 @@ class SourceReader:
         return self._deliver(loaded, proof.span, node=proof.id, start=start)
 
     def read_context(self, sha256: str, node: str, *, before: int = 400, after: int = 400, tree: str | None = None, clamp: tuple[int, int] | None = None) -> Delivery:
+        """Read around the first node range, bounded by its representation and optional clamp."""
         try:
             loaded = self._load(sha256, tree)
             record = loaded.tree.node(node)
@@ -282,6 +292,7 @@ class SourceReader:
         return self._deliver(loaded, window, node=record.id)
 
     def read_span(self, span: SourceSpan, *, tree: str | None = None) -> Delivery:
+        """Resolve the exact attributed content and digest named by a source span."""
         try:
             loaded = self._load(span.artifact_sha256, tree)
         except SourceUnavailable as error:
@@ -289,6 +300,7 @@ class SourceReader:
         return self._deliver(loaded, span, node=span.node)
 
     def original_region(self, sha256: str, node: str, *, tree: str | None = None) -> tuple[SourceAnchor, ...]:
+        """Recorded anchors and mapped page regions, without inventing finer precision."""
         loaded = self._load(sha256, tree)
         record = loaded.tree.node(node)
         anchors = list(record.span.anchors)
