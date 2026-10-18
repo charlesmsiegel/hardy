@@ -150,6 +150,33 @@ def test_one_arxiv_paper_gets_one_key_whichever_path_cites_it(tmp_path: Path):
     assert by_paper.key == by_edition.key == cite_key(record) == edition_cite_key(work, edition)
 
 
+@pytest.mark.parametrize("metadata", [
+    {"published": "", "updated": "2002-11-11T18:00:00Z"},
+    {"arxiv_id": "math.DG/0211159v1", "title": "Энтропия", "authors": ("Перельман",), "published": ""},
+    {"published": "Submitted 2002-11-11"},
+])
+def test_citation_paths_share_date_and_identifier_fallbacks(tmp_path: Path, metadata):
+    record = _perelman().model_copy(update=metadata)
+    work, edition = catalog_records(record)
+    by_paper, _ = Bibliography(tmp_path / "paper").cite(record)
+    by_edition, _ = Bibliography(tmp_path / "edition").cite_edition(
+        work, edition, read_artifacts=(record.content_sha256,),
+    )
+    assert by_paper.key == by_edition.key == cite_key(record) == edition_cite_key(work, edition)
+    assert by_paper.year == by_edition.year
+
+
+def test_repeated_citation_keeps_held_description_when_new_metadata_is_blank(tmp_path: Path):
+    bibliography = Bibliography(tmp_path)
+    first, _ = bibliography.cite(_perelman())
+    refreshed = _perelman().model_copy(update={"authors": (" ",), "content_sha256": PDF})
+    second, added = bibliography.cite(refreshed)
+    assert not added and second.key == first.key and second.authors == first.authors
+    assert second.content_sha256 == first.content_sha256 and second.also_read == (PDF,)
+    with pytest.raises(ValueError, match="authors.*blank"):
+        Bibliography(tmp_path / "new").cite(refreshed)
+
+
 @pytest.mark.parametrize("path", ["cite", "cite_edition"])
 def test_a_stored_key_minted_under_the_catalog_identity_is_kept(tmp_path: Path, path: str):
     """A key already in a store is never minted again, whatever rule minted it.

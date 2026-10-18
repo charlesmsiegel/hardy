@@ -212,6 +212,17 @@ class PaperRecord(FrozenModel):
         return f"{self.arxiv_id}  {self.title} ({who})"
 
 
+def publication_year(record: PaperRecord) -> str:
+    """The recorded submission year, falling back to the update date.
+
+    A version identifier is not a date: its four-digit prefix combines a year
+    and month. Bibliography and catalog descriptions use these metadata dates
+    together so adapting a paper does not change its citation key.
+    """
+    found = re.search(r"(\d{4})", record.published or record.updated or "")
+    return found.group(1) if found else ""
+
+
 def _wrapped(line: str) -> list[str]:
     """One line, cut to a width a bounded read can return whole.
 
