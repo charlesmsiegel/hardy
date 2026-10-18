@@ -236,6 +236,7 @@ def build_tree(
     observations: tuple[StructuralObservation, ...], *, page_spans: Mapping[int, RepresentationSpan] | None = None,
     previous: SourceTree | None = None, builder_version: str = BUILDER_VERSION,
 ) -> SourceTree:
+    """Reconstruct attributable units and mention edges without inferring logical authority."""
     if representation.artifact_sha256 != artifact.sha256:
         raise TreeError("a tree is built from representations of its own artifact")
     rep = representation.id
@@ -243,10 +244,35 @@ def build_tree(
     text_obs = [o for o in observations if o.artifact_sha256 == artifact.sha256 and (r := _range(o)) is not None and r.representation == rep]
     page_obs = [o for o in observations if o.artifact_sha256 == artifact.sha256 and _page(o) is not None]
     boundaries = _boundaries(text, text_obs)
-    units: list[Unit] = []
-    proof_ends = sorted(r.end for o in text_obs if o.kind is ObservationKind.PROOF_END and (r := _range(o)) is not None)
+    units = _heading_units(text_obs)
+    heading_starts = {u.start for u in units}
+    units.extend(_outline_units(text, page_obs, page_spans, heading_starts, diagnostics))
+    if any(u.start in heading_starts for u in units):
+        boundaries = sorted(set(boundaries) | heading_starts)
+    units.extend(_leaf_units(text, text_obs, boundaries, diagnostics))
+    units.sort(key=lambda u: (u.start, 0 if u.kind in CONTAINER_KINDS else 1))
+    nodes, unit_by_node = _tree_nodes(artifact.sha256, rep, text, units, page_spans=page_spans, builder_version=builder_version)
+    lookup = _NodeIndex.of(nodes)
+    edges = [SourceEdge(kind=SourceEdgeKind.CONTAINS, source=n.parent, target=n.id) for n in nodes if n.parent]
+    edges.extend(_proof_edges(nodes, unit_by_node, lookup, diagnostics))
+    edges.extend(_reference_edges(nodes, text_obs, text, lookup, diagnostics))
+    diagnostics.extend(_numbering_gaps(lookup.numbers))
 
-    # 1. Headings: text headings first, outline entries located inside their page.
+    seed = [artifact.sha256, BUILDER, builder_version, [n.model_dump(mode="json") for n in nodes], [e.model_dump(mode="json") for e in edges]]
+    # Preserve the historical v1 identity protocol. Current trees include
+    # diagnostics so reuse cannot discard newly discovered extraction gaps.
+    if builder_version != "1":
+        seed.append([d.model_dump(mode="json") for d in diagnostics])
+    tree_seed = json_digest(seed)
+    return SourceTree(
+        id=f"tree-{tree_seed[:16]}", artifact_sha256=artifact.sha256, version=(previous.version + 1) if previous else 1,
+        builder=BUILDER, builder_version=builder_version, representations=(rep,), nodes=tuple(nodes), edges=tuple(edges),
+        diagnostics=tuple(diagnostics), supersedes=previous.id if previous else None, built_at=_stamp(),
+    )
+
+def _heading_units(text_obs: list[StructuralObservation]) -> list[Unit]:
+    """Text headings win when native and heuristic observations share a start."""
+    units = []
     seen_heading_starts: set[int] = set()
     for o in text_obs:
         if o.kind is not ObservationKind.HEADING:
@@ -260,7 +286,15 @@ def build_tree(
         units.append(Unit(kind=LEVEL_KINDS.get(level, NodeKind.SUBSECTION), start=r.start, end=r.end, title=o.value("title") or None,
                            number=o.value("number") or None, number_origin="explicit" if o.value("number") else "none",
                            level=level, observations=(o.id,), confidence=o.confidence))
-    heading_starts = {u.start for u in units}
+    return units
+
+
+def _outline_units(
+    text: str, page_obs: list[StructuralObservation], page_spans: Mapping[int, RepresentationSpan] | None,
+    heading_starts: set[int], diagnostics: list[Diagnostic],
+) -> list[Unit]:
+    """Locate native titles within their page, disclosing unmatched or unlocated entries."""
+    units = []
     for o in page_obs:
         if o.kind is not ObservationKind.OUTLINE_ENTRY:
             continue
@@ -289,10 +323,13 @@ def build_tree(
         units.append(Unit(kind=LEVEL_KINDS.get(level, NodeKind.SUBSECTION), start=start, end=end, title=(match.group("title") if match else title) or None,
                            number=number, number_origin="explicit" if number else "none", level=level, boundary=boundary,
                            observations=(o.id,), confidence=o.confidence))
-    if any(u.start in heading_starts for u in units):
-        boundaries = sorted(set(boundaries) | heading_starts)
+    return units
 
-    # 2. Statements and proofs.
+
+def _leaf_units(text: str, text_obs: list[StructuralObservation], boundaries: list[int], diagnostics: list[Diagnostic]) -> list[Unit]:
+    """Keep explicit environments and delimit statements and proofs with honest boundaries."""
+    units = []
+    proof_ends = sorted(r.end for o in text_obs if o.kind is ObservationKind.PROOF_END and (r := _range(o)) is not None)
     for o in text_obs:
         r = _range(o)
         assert r is not None
@@ -320,7 +357,7 @@ def build_tree(
             else:
                 end = _trim(text, r.start, limit)
                 boundary = "probable"
-                diagnostics.append(Diagnostic(code="proof_end_unresolved", detail=f"no end-of-proof marker before the next unit at {limit}", severity="info", representation=rep))
+                diagnostics.append(Diagnostic(code="proof_end_unresolved", detail=f"no end-of-proof marker before the next unit at {limit}", severity="info", representation=r.representation))
             target = None
             label = o.value("label")
             proof_of = re.search(r"of\s+(?:Theorem|Lemma|Proposition|Corollary|Claim)\s+([0-9]+(?:\.[0-9]+)*)", text[r.start:r.end])
@@ -329,8 +366,14 @@ def build_tree(
             units.append(Unit(kind=NodeKind.PROOF, start=r.start, end=end, label=label, boundary=boundary, observations=(o.id,),
                                confidence=o.confidence, proof_target_number=target))
 
-    units.sort(key=lambda u: (u.start, 0 if u.kind in CONTAINER_KINDS else 1))
+    return units
 
+
+def _tree_nodes(
+    artifact_sha256: str, rep: str, text: str, units: list[Unit], *,
+    page_spans: Mapping[int, RepresentationSpan] | None, builder_version: str,
+) -> tuple[list[SourceNode], dict[str, Unit]]:
+    """Materialize nested units and uncovered text with stable, content-derived identities."""
     # 3. Container spans: a heading runs to the next heading of the same or a higher level.
     containers = _ContainerLayout.of(text, units)
 
@@ -343,7 +386,7 @@ def build_tree(
     def make_node(unit: Unit, parent: str | None, start: int, end: int) -> SourceNode:
         order = counters.get(parent, 0)
         counters[parent] = order + 1
-        node = node_record(artifact.sha256, rep, text, unit, parent=parent, start=start, end=end, order=order,
+        node = node_record(artifact_sha256, rep, text, unit, parent=parent, start=start, end=end, order=order,
                            page_spans=page_spans, taken=taken, provenance=f"{BUILDER}/{builder_version}")
         taken.add(node.id)
         ids[id(unit)] = node.id
@@ -373,39 +416,60 @@ def build_tree(
         make_node(unit, ids.get(id(owner)) if owner else None, start, end)
     nodes = reading_order(nodes)
 
-    # 6. Edges: containment, proof_of, source_refers_to.
-    edges: list[SourceEdge] = [SourceEdge(kind=SourceEdgeKind.CONTAINS, source=n.parent, target=n.id) for n in nodes if n.parent]
-    by_number: dict[str, list[SourceNode]] = {}
-    by_label: dict[str, list[SourceNode]] = {}
-    for node in nodes:
-        if node.kind not in CONTAINER_KINDS and node.label:
-            by_label.setdefault(node.label, []).append(node)
-        if node.kind in STATEMENT_KINDS and node.number:
-            by_number.setdefault(node.number, []).append(node)
-    statements_by_parent: dict[str | None, list[SourceNode]] = {}
-    for node in nodes:
-        if node.kind in STATEMENT_KINDS:
-            statements_by_parent.setdefault(node.parent, []).append(node)
-    statement_ends = {parent: [n.span.ranges[0].end for n in group] for parent, group in statements_by_parent.items()}
     unit_by_node = {ids[id(u)]: u for u in units if id(u) in ids}
+    return nodes, unit_by_node
+
+
+@dataclass(frozen=True)
+class _NodeIndex:
+    """Printed names and container-local statements for association, never identity."""
+
+    numbers: dict[str, list[SourceNode]]
+    labels: dict[str, list[SourceNode]]
+    statements: dict[str | None, list[SourceNode]]
+
+    @classmethod
+    def of(cls, nodes: list[SourceNode]) -> _NodeIndex:
+        numbers: dict[str, list[SourceNode]] = {}
+        labels: dict[str, list[SourceNode]] = {}
+        statements: dict[str | None, list[SourceNode]] = {}
+        for node in nodes:
+            if node.kind not in CONTAINER_KINDS and node.label:
+                labels.setdefault(node.label, []).append(node)
+            if node.kind in STATEMENT_KINDS:
+                if node.number:
+                    numbers.setdefault(node.number, []).append(node)
+                statements.setdefault(node.parent, []).append(node)
+        return cls(numbers, labels, statements)
+
+
+def _proof_edges(
+    nodes: list[SourceNode], unit_by_node: Mapping[str, Unit], lookup: _NodeIndex, diagnostics: list[Diagnostic],
+) -> list[SourceEdge]:
+    """Associate an explicit proof target or the preceding statement in its container."""
+    edges = []
+    statement_ends = {parent: [n.span.ranges[0].end for n in group] for parent, group in lookup.statements.items()}
     for node in nodes:
         if node.kind is not NodeKind.PROOF:
             continue
         unit = unit_by_node.get(node.id)
         target = None
-        if unit is not None and unit.proof_target_number and unit.proof_target_number in by_number:
-            target = by_number[unit.proof_target_number][0]
+        if unit is not None and unit.proof_target_number and unit.proof_target_number in lookup.numbers:
+            target = lookup.numbers[unit.proof_target_number][0]
         else:
-            group = statements_by_parent.get(node.parent, [])
+            group = lookup.statements.get(node.parent, [])
             index = bisect_right(statement_ends.get(node.parent, []), node.span.ranges[0].start) - 1
             target = group[index] if index >= 0 else None
         if target is not None:
             edges.append(SourceEdge(kind=SourceEdgeKind.PROOF_OF, source=node.id, target=target.id))
         else:
             diagnostics.append(Diagnostic(code="proof_without_statement", detail=f"proof {node.id} has no preceding statement in its container", severity="info"))
-    # Sweep reference positions once. The heap retains the last containing
-    # leaf in reading order, including overlapping display/statement spans.
-    references = [(index, o) for index, o in enumerate(text_obs) if o.kind is ObservationKind.REFERENCE]
+    return edges
+
+
+def _reference_holders(nodes: list[SourceNode], references: list[tuple[int, StructuralObservation]]) -> dict[int, SourceNode]:
+    # Sweep once. The heap retains the last containing leaf in reading order,
+    # including overlapping display/statement spans.
     leaf_nodes = [n for n in nodes if n.kind not in CONTAINER_KINDS]
     holders: dict[int, SourceNode] = {}
     active: list[tuple[int, int]] = []
@@ -421,6 +485,16 @@ def build_tree(
             heapq.heappop(active)
         if active:
             holders[index] = leaf_nodes[-active[0][0]]
+    return holders
+
+
+def _reference_edges(
+    nodes: list[SourceNode], text_obs: list[StructuralObservation], text: str, lookup: _NodeIndex, diagnostics: list[Diagnostic],
+) -> list[SourceEdge]:
+    """Resolve printed references as mentions, disclosing unresolved names."""
+    references = [(index, o) for index, o in enumerate(text_obs) if o.kind is ObservationKind.REFERENCE]
+    holders = _reference_holders(nodes, references)
+    edges = []
     for index, o in references:
         r = _range(o)
         assert r is not None
@@ -435,28 +509,15 @@ def build_tree(
         references_to_resolve = [label.strip() for label in reference.split(",")] if grouped_reference else [reference]
         wanted_kind = KINDS_BY_KEYWORD.get(o.value("kind"))
         for name in references_to_resolve:
-            targets = by_label.get(name, []) if label_reference else by_number.get(name, [])
+            targets = lookup.labels.get(name, []) if label_reference else lookup.numbers.get(name, [])
             target = next((t for t in targets if wanted_kind is None or t.kind is wanted_kind), None)
             if target is None:
-                diagnostics.append(Diagnostic(code="unresolved_reference", detail=f"{o.value('kind')} {name} is referenced but no such unit was recovered", severity="info", representation=rep))
+                diagnostics.append(Diagnostic(code="unresolved_reference", detail=f"{o.value('kind')} {name} is referenced but no such unit was recovered", severity="info", representation=r.representation))
                 continue
             if target.id != holder.id:
                 edges.append(SourceEdge(kind=SourceEdgeKind.SOURCE_REFERS_TO, source=holder.id, target=target.id, anchor=o.anchor))
 
-    # 7. Numbering gaps are diagnostics.
-    diagnostics.extend(_numbering_gaps(by_number))
-
-    seed = [artifact.sha256, BUILDER, builder_version, [n.model_dump(mode="json") for n in nodes], [e.model_dump(mode="json") for e in edges]]
-    # Preserve the historical v1 identity protocol. Current trees include
-    # diagnostics so reuse cannot discard newly discovered extraction gaps.
-    if builder_version != "1":
-        seed.append([d.model_dump(mode="json") for d in diagnostics])
-    tree_seed = json_digest(seed)
-    return SourceTree(
-        id=f"tree-{tree_seed[:16]}", artifact_sha256=artifact.sha256, version=(previous.version + 1) if previous else 1,
-        builder=BUILDER, builder_version=builder_version, representations=(rep,), nodes=tuple(nodes), edges=tuple(edges),
-        diagnostics=tuple(diagnostics), supersedes=previous.id if previous else None, built_at=_stamp(),
-    )
+    return edges
 
 
 def page_spans_from(mapping: RepresentationMapping) -> dict[int, RepresentationSpan]:
