@@ -57,7 +57,7 @@ from hardy.workflows.recorded.common import (
 from hardy.workflows.storage import TrajectoryEvent, artifact_bytes, artifact_paths
 
 
-def grades_agree(recorded: Any, manifest_grades: Grades) -> bool:
+def grades_agree(recorded: object, manifest_grades: Grades) -> bool:
     """Whether a trajectory's terminal grades are the manifest's.
 
     Both sides are read through today's `Grades` before they are compared.
@@ -427,6 +427,34 @@ def _validate_run_consistency(
     saved_manifest = RunManifest.model_validate_json(_required_text(manifest_path))
     if saved_manifest != manifest:
         issues.append("provided manifest differs from manifest.json")
+    _artifact_inventory_issues(run_dir, manifest, issues)
+    if (run_dir / ASSUMPTIONS_FILE).exists() and _declared(run_dir) is None:
+        issues.append("assumptions.json is not a valid declared-assumption list")
+    claim = _manifest_claim_issues(run_dir, manifest, issues)
+    _terminal_issues(run_dir, manifest, _trajectory, issues)
+    issues.extend(
+        _faithfulness_issues(
+            manifest,
+            claim,
+            run_dir / "faithfulness.json",
+            run_dir / "faithfulness-prompt.md",
+            run_dir / "faithfulness-schema.json",
+        )
+    )
+    main = run_dir / "lean" / "Main.lean"
+    verification_path = run_dir / "lean" / "verification.json"
+    if manifest.grades.formal in VERIFIED_GRADES:
+        issues.extend(
+            _verified_run_issues(manifest, claim, main, verification_path, run_dir)
+        )
+    elif main.exists():
+        issues.append("non-verified run unexpectedly has lean/Main.lean")
+    _document_issues(run_dir, manifest, claim, issues)
+    return tuple(issues)
+
+
+def _artifact_inventory_issues(run_dir: Path, manifest: RunManifest, issues: list[str]) -> None:
+    """Account for every listed and unlisted byte before interpreting its meaning."""
     for relative, expected in manifest.artifacts.items():
         path = run_dir / Path(relative)
         if not path.exists():
@@ -445,8 +473,10 @@ def _validate_run_consistency(
             issues.append("unlisted artifact: " + relative)
         if path.is_symlink() or not path.is_file():
             issues.append(relative + " is not a regular file")
-    if (run_dir / ASSUMPTIONS_FILE).exists() and _declared(run_dir) is None:
-        issues.append("assumptions.json is not a valid declared-assumption list")
+
+
+def _manifest_claim_issues(run_dir: Path, manifest: RunManifest, issues: list[str]) -> FrozenClaim | None:
+    """Bind the manifest's statement and environment to the recorded frozen claim."""
     claim_path = run_dir / "formalization.json"
     claim = None
     if claim_path.exists():
@@ -463,11 +493,18 @@ def _validate_run_consistency(
             issues.append("manifest environment differs from the Frozen Claim")
     elif not claim_path.exists() and manifest.claim_sha256 is not None:
         issues.append("formalization.json is missing")
-    trajectory = run_dir / "trajectory.jsonl"
-    if not trajectory.exists():
+    return claim
+
+
+def _terminal_issues(run_dir: Path, manifest: RunManifest,
+                     trajectory: tuple[list[dict[str, Any]], list[str]] | None,
+                     issues: list[str]) -> None:
+    """The final event and manifest must describe the same terminal outcome."""
+    trajectory_path = run_dir / "trajectory.jsonl"
+    if not trajectory_path.exists():
         issues.append("trajectory.jsonl is missing")
     else:
-        events, trajectory_issues = _trajectory if _trajectory is not None else _trajectory_events(trajectory, run_id=manifest.run_id)
+        events, trajectory_issues = trajectory if trajectory is not None else _trajectory_events(trajectory_path, run_id=manifest.run_id)
         issues.extend(trajectory_issues)
         if not events or events[-1].get("kind") != "workflow.terminal":
             issues.append("trajectory has no final terminal event")
@@ -478,23 +515,11 @@ def _validate_run_consistency(
                 issues.append("terminal reason differs from manifest")
             if not grades_agree(terminal.get("grades"), manifest.grades):
                 issues.append("terminal grades differ from manifest")
-    issues.extend(
-        _faithfulness_issues(
-            manifest,
-            claim,
-            run_dir / "faithfulness.json",
-            run_dir / "faithfulness-prompt.md",
-            run_dir / "faithfulness-schema.json",
-        )
-    )
-    main = run_dir / "lean" / "Main.lean"
-    verification_path = run_dir / "lean" / "verification.json"
-    if manifest.grades.formal in VERIFIED_GRADES:
-        issues.extend(
-            _verified_run_issues(manifest, claim, main, verification_path, run_dir)
-        )
-    elif main.exists():
-        issues.append("non-verified run unexpectedly has lean/Main.lean")
+
+
+def _document_issues(run_dir: Path, manifest: RunManifest, claim: FrozenClaim | None,
+                     issues: list[str]) -> None:
+    """Require writeup artifacts exactly when their grades say the document was attempted."""
     tex = run_dir / "writeup" / "paper.tex"
     pdf = run_dir / "writeup" / "paper.pdf"
     # Demanded of a run that reached the writeup, and refused of one that did
@@ -521,7 +546,6 @@ def _validate_run_consistency(
             issues.append("compiled document has no valid PDF artifact")
     elif pdf.exists():
         issues.append("failed document unexpectedly has a PDF artifact")
-    return tuple(issues)
 
 
 def _live_staged_issues_unchecked(
@@ -549,6 +573,16 @@ def _live_staged_issues_unchecked(
         events, trajectory_issues = _trajectory if _trajectory is not None else _trajectory_events(trajectory, run_id=manifest.run_id)
         if _trajectory is None:
             issues.extend(trajectory_issues)
+    _provider_report_issues(manifest, events, issues)
+    _fresh_verifier_issues(run_dir, manifest, events, issues)
+    _reader_independence_issues(manifest, events, issues)
+    _live_document_issues(run_dir, manifest, issues)
+    return issues
+
+
+def _provider_report_issues(manifest: RunManifest, events: list[dict[str, Any]],
+                            issues: list[str]) -> None:
+    """Compare claimed exchange counts with the provider reports the run actually kept."""
     kinds = [event.get("kind") for event in events]
     if not any(str(kind).startswith(("claude.", "codex.")) for kind in kinds):
         issues.append("trajectory records no provider events; nothing a model did is on record")
@@ -561,28 +595,38 @@ def _live_staged_issues_unchecked(
         issues.append(
             f"manifest states {exchanges!r} exchanges but the trajectory holds {reported} provider reports"
         )
-    if manifest.grades.formal in VERIFIED_GRADES:
-        if "workflow.transition" not in kinds:
-            issues.append("trajectory records no phase transitions")
-        verification_path = run_dir / "lean" / "verification.json"
-        evidence = manifest.grades.verification_evidence
-        if verification_path.exists() and evidence is not None:
-            try:
-                verification = VerificationResult.model_validate_json(_required_text(verification_path))
-            except ValidationError:
-                verification = None
-            if verification is not None:
-                spoken = "\n".join(item.message for item in verification.diagnostics)
-                claim_path = run_dir / "formalization.json"
-                theorem = None
-                claim = _recorded_claim(claim_path)
-                if claim is not None:
-                    theorem = claim.proposal.theorem_name
-                reports = audit.parse(spoken, (theorem,)) if theorem else None
-                if reports is None:
-                    issues.append("the fresh verifier kept no axiom report from Lean; the check cannot be shown to have run")
-                elif set(reports[0].axioms) != set(evidence.axioms):
-                    issues.append("the axiom line the fresh Lean printed differs from the graded evidence")
+
+
+def _fresh_verifier_issues(run_dir: Path, manifest: RunManifest, events: list[dict[str, Any]],
+                           issues: list[str]) -> None:
+    """A verified grade needs the fresh Lean diagnostic report matching its graded axioms."""
+    if manifest.grades.formal not in VERIFIED_GRADES:
+        return
+    kinds = [event.get("kind") for event in events]
+    if "workflow.transition" not in kinds:
+        issues.append("trajectory records no phase transitions")
+    verification_path = run_dir / "lean" / "verification.json"
+    evidence = manifest.grades.verification_evidence
+    if not verification_path.exists() or evidence is None:
+        return
+    try:
+        verification = VerificationResult.model_validate_json(_required_text(verification_path))
+    except ValidationError:
+        return
+    spoken = "\n".join(item.message for item in verification.diagnostics)
+    claim_path = run_dir / "formalization.json"
+    claim = _recorded_claim(claim_path)
+    theorem = claim.proposal.theorem_name if claim is not None else None
+    reports = audit.parse(spoken, (theorem,)) if theorem else None
+    if reports is None:
+        issues.append("the fresh verifier kept no axiom report from Lean; the check cannot be shown to have run")
+    elif set(reports[0].axioms) != set(evidence.axioms):
+        issues.append("the axiom line the fresh Lean printed differs from the graded evidence")
+
+
+def _reader_independence_issues(manifest: RunManifest, events: list[dict[str, Any]],
+                               issues: list[str]) -> None:
+    """The credited reader must have a recorded session separate from the formalizer."""
     # The independent reader read on a provider session of its own. One id
     # across the formalizer and the reader leaves open that the reader
     # inherited the conversation which wrote the translation, and the
@@ -613,41 +657,46 @@ def _live_staged_issues_unchecked(
     review = manifest.grades.faithfulness_review
     if review is not None and review.reviewer_backend == "claude" and reader_results == 0:
         issues.append("the manifest records a faithfulness review but the trajectory holds no reader result")
-    if manifest.grades.document is DocumentStatus.TEX_COMPILED:
-        log = run_dir / "writeup" / "compile.log"
-        if log.exists():
-            log_text = _required_text(log)
-            dropped = dropped_glyphs(log_text)
-            if dropped:
-                issues.append(
-                    "the compiled document dropped characters the font lacked: " + "; ".join(dropped[:3])
-                )
-            outside = host_paths(log_text)
-            if outside:
-                issues.append(
-                    "the compiled document read files outside the pinned bundle: " + "; ".join(outside[:3])
-                )
-    if manifest.grades.document is DocumentStatus.TEX_COMPILED and manifest.environment is not None:
-        tex = run_dir / "writeup" / "paper.tex"
-        if tex.exists():
-            text = _required_text(tex)
-            for line in (f"Lean: {manifest.environment.lean_version}", f"Mathlib: {manifest.environment.mathlib_revision}"):
-                if line not in text:
-                    issues.append(f"paper.tex does not carry the identity line {line!r}")
-            # And the exact statement, verbatim as the frozen claim renders it:
-            # the claim hash alone would let a document about another theorem
-            # pass on a hash it merely quotes.
-            claim_path = run_dir / "formalization.json"
-            claim = _recorded_claim(claim_path)
-            if claim is not None:
-                proposal = claim.proposal
-                binders = f" {proposal.binders.strip()}" if proposal.binders.strip() else ""
-                signature = f"theorem {proposal.theorem_name}{binders} : {proposal.proposition.strip()}"
-                if signature not in text:
-                    issues.append("paper.tex does not quote the Frozen Claim's exact Lean statement")
-            if "Tectonic: unrecorded" in text:
-                issues.append("paper.tex says its compiler was not identified")
-    return issues
+
+
+def _live_document_issues(run_dir: Path, manifest: RunManifest, issues: list[str]) -> None:
+    """A compiled writeup must retain its compiler output and exact reproduction identities."""
+    if manifest.grades.document is not DocumentStatus.TEX_COMPILED:
+        return
+    log = run_dir / "writeup" / "compile.log"
+    if log.exists():
+        log_text = _required_text(log)
+        dropped = dropped_glyphs(log_text)
+        if dropped:
+            issues.append(
+                "the compiled document dropped characters the font lacked: " + "; ".join(dropped[:3])
+            )
+        outside = host_paths(log_text)
+        if outside:
+            issues.append(
+                "the compiled document read files outside the pinned bundle: " + "; ".join(outside[:3])
+            )
+    if manifest.environment is None:
+        return
+    tex = run_dir / "writeup" / "paper.tex"
+    if tex.exists():
+        text = _required_text(tex)
+        for line in (f"Lean: {manifest.environment.lean_version}", f"Mathlib: {manifest.environment.mathlib_revision}"):
+            if line not in text:
+                issues.append(f"paper.tex does not carry the identity line {line!r}")
+        # And the exact statement, verbatim as the frozen claim renders it:
+        # the claim hash alone would let a document about another theorem
+        # pass on a hash it merely quotes.
+        claim_path = run_dir / "formalization.json"
+        claim = _recorded_claim(claim_path)
+        if claim is not None:
+            proposal = claim.proposal
+            binders = f" {proposal.binders.strip()}" if proposal.binders.strip() else ""
+            signature = f"theorem {proposal.theorem_name}{binders} : {proposal.proposition.strip()}"
+            if signature not in text:
+                issues.append("paper.tex does not quote the Frozen Claim's exact Lean statement")
+        if "Tectonic: unrecorded" in text:
+            issues.append("paper.tex says its compiler was not identified")
 
 
 def validate_run_consistency(
