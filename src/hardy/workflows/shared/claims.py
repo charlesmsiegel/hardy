@@ -31,6 +31,7 @@ RETRIES = 5
 
 
 class LinkRelation(str, Enum):
+    """The semantic relation proposed between a source reading and shared claim."""
     EXPRESSES = "expresses"
     SPECIALIZES = "specializes"
     GENERALIZES = "generalizes"
@@ -39,6 +40,7 @@ class LinkRelation(str, Enum):
 
 
 class LinkStatus(str, Enum):
+    """The review/admission state of an immutable source interpretation."""
     PROPOSED = "proposed"
     AMBIGUOUS = "ambiguous"
     ADMITTED = "admitted"
@@ -47,12 +49,14 @@ class LinkStatus(str, Enum):
 
 
 class HumanApproval(FrozenModel):
+    """An explicit user decision; a model cannot supply human authority."""
     actor: Text
     reason: Text
     at: str
 
 
 class SourceClaimLink(FrozenModel):
+    """An exact source reading, its claim candidates and the authority for admission."""
     id: StableId
     artifact_sha256: Digest
     tree: StableId
@@ -77,6 +81,7 @@ class SourceClaimLink(FrozenModel):
 
 
 class InterpretationProposal(FrozenModel):
+    """Unadmitted claim candidates and interpretation mappings from one interpreter."""
     claim_candidates: tuple[VersionRef, ...] = ()
     new_claim: ProjectItem | None = None
     relation: LinkRelation = LinkRelation.EXPRESSES
@@ -116,6 +121,7 @@ def link_digest(link: SourceClaimLink, target: VersionRef | ProjectItem) -> str:
 
 
 class LinkStore:
+    """An optimistic journal whose validator owns link identity and admission invariants."""
     def __init__(self, directory: Path) -> None:
         self._journal = Journal(Path(directory), types={"SourceClaimLink": SourceClaimLink})
 
@@ -174,45 +180,67 @@ def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
         ):
             raise LinkError("the interpretation digest does not name this exact source reading")
         if record.status is LinkStatus.ADMITTED:
-            if record.claim is None:
-                raise LinkError("an admitted link names an exact shared claim")
-            if not ((record.faithfulness is not None and record.faithfulness.agreed) or record.approval is not None):
-                raise LinkError("admission needs an agreeing faithfulness verdict or an explicit human approval")
-            if record.faithfulness is not None and (record.interpretation_sha256 is None or record.faithfulness.claim_sha256 != record.interpretation_sha256):
-                raise LinkError("the faithfulness verdict is about another statement")
-            if record.interpretation_target is not None and record.interpretation_target.id != record.claim.id:
-                raise LinkError("the interpretation names another claim")
-            if record.approval is not None and not record.approval.actor.startswith("user:"):
-                raise LinkError("a human approval names a user; a model is not an approver")
-            if record.proposed_claim is not None:
-                raise LinkError("an admitted link carries no unadmitted proposed claim")
+            _validate_admission(record)
         elif record.status in {LinkStatus.PROPOSED, LinkStatus.AMBIGUOUS}:
-            if record.interpretation_target is not None and record.interpretation_target not in (record.claim, record.proposed_claim):
-                raise LinkError("the interpretation target does not match the proposed claim")
-            if record.claim is None and record.proposed_claim is None and not record.candidates:
-                raise LinkError("a proposal names a candidate claim, a proposed new claim, or both")
-            if record.status is LinkStatus.PROPOSED and record.claim is not None and record.candidates:
-                raise LinkError("a single-candidate proposal names one claim")
+            _validate_proposal(record)
         previous = heads.get(record.id)
         if previous is not None:
-            if (previous.artifact_sha256, previous.tree, previous.node, previous.span, previous.node_version, previous.node_kind, previous.relation, previous.notation_mapping, previous.context_mapping) != (record.artifact_sha256, record.tree, record.node, record.span, record.node_version, record.node_kind, record.relation, record.notation_mapping, record.context_mapping):
-                raise LinkError("a link's source identity never changes; propose a new link")
-            if previous.interpretation_sha256 is not None and (previous.interpretation_sha256, previous.interpretation_target) != (record.interpretation_sha256, record.interpretation_target):
-                raise LinkError("a link's interpretation identity never changes; propose a new link")
-            if record.status is LinkStatus.ADMITTED and previous.interpretation_target is None:
-                target = record.interpretation_target
-                allowed = (*previous.candidates, *((previous.claim,) if previous.claim else ()),
-                           *((previous.proposed_claim,) if previous.proposed_claim else ()))
-                if target not in allowed:
-                    raise LinkError("the interpretation target is not one of the proposed claims")
-            if previous.status is LinkStatus.ADMITTED and record.status in {LinkStatus.PROPOSED, LinkStatus.AMBIGUOUS}:
-                raise LinkError("an admitted link does not return to a proposal")
-            if previous.status is LinkStatus.ADMITTED and record.status is LinkStatus.ADMITTED and previous.claim != record.claim:
-                raise LinkError("an admitted link is not silently retargeted; reject it and propose another")
+            _validate_transition(previous, record)
         heads[record.id] = record
 
 
+def _source_identity(link: SourceClaimLink) -> tuple:
+    """The source reading that a revision may annotate but never replace."""
+    return (link.artifact_sha256, link.tree, link.node, link.span, link.node_version,
+            link.node_kind, link.relation, link.notation_mapping, link.context_mapping)
+
+
+def _validate_admission(record: SourceClaimLink) -> None:
+    """Require a claim and exact reading authority before admitting a link."""
+    if record.claim is None:
+        raise LinkError("an admitted link names an exact shared claim")
+    if not ((record.faithfulness is not None and record.faithfulness.agreed) or record.approval is not None):
+        raise LinkError("admission needs an agreeing faithfulness verdict or an explicit human approval")
+    if record.faithfulness is not None and (record.interpretation_sha256 is None or record.faithfulness.claim_sha256 != record.interpretation_sha256):
+        raise LinkError("the faithfulness verdict is about another statement")
+    if record.interpretation_target is not None and record.interpretation_target.id != record.claim.id:
+        raise LinkError("the interpretation names another claim")
+    if record.approval is not None and not record.approval.actor.startswith("user:"):
+        raise LinkError("a human approval names a user; a model is not an approver")
+    if record.proposed_claim is not None:
+        raise LinkError("an admitted link carries no unadmitted proposed claim")
+
+
+def _validate_proposal(record: SourceClaimLink) -> None:
+    """A proposal must name its candidates while preserving its interpretation target."""
+    if record.interpretation_target is not None and record.interpretation_target not in (record.claim, record.proposed_claim):
+        raise LinkError("the interpretation target does not match the proposed claim")
+    if record.claim is None and record.proposed_claim is None and not record.candidates:
+        raise LinkError("a proposal names a candidate claim, a proposed new claim, or both")
+    if record.status is LinkStatus.PROPOSED and record.claim is not None and record.candidates:
+        raise LinkError("a single-candidate proposal names one claim")
+
+
+def _validate_transition(previous: SourceClaimLink, record: SourceClaimLink) -> None:
+    """Keep identities frozen and prevent admission from silently changing its target."""
+    if _source_identity(previous) != _source_identity(record):
+        raise LinkError("a link's source identity never changes; propose a new link")
+    if previous.interpretation_sha256 is not None and (previous.interpretation_sha256, previous.interpretation_target) != (record.interpretation_sha256, record.interpretation_target):
+        raise LinkError("a link's interpretation identity never changes; propose a new link")
+    if record.status is LinkStatus.ADMITTED and previous.interpretation_target is None:
+        target = record.interpretation_target
+        allowed = (*previous.candidates, *((previous.claim,) if previous.claim else ()),
+                   *((previous.proposed_claim,) if previous.proposed_claim else ()))
+        if target not in allowed:
+            raise LinkError("the interpretation target is not one of the proposed claims")
+    if previous.status is LinkStatus.ADMITTED and record.status in {LinkStatus.PROPOSED, LinkStatus.AMBIGUOUS}:
+        raise LinkError("an admitted link does not return to a proposal")
+    if previous.status is LinkStatus.ADMITTED and record.status is LinkStatus.ADMITTED and previous.claim != record.claim:
+        raise LinkError("an admitted link is not silently retargeted; reject it and propose another")
+
+
 class ClaimLinker:
+    """Coordinate source interpretation and provenance without treating proposals as trust."""
     def __init__(self, *, library: ManagedLibrary, claims: SharedClaims, links: LinkStore) -> None:
         self.library = library
         self.claims = claims
@@ -286,26 +314,7 @@ class ClaimLinker:
             interpretation_sha256 = link_digest(link, target)
             if verdict is not None and verdict.claim_sha256 != interpretation_sha256:
                 raise LinkError("the faithfulness verdict is about another statement")
-            if claim_ref is None:
-                assert proposed is not None
-                if created is not None and created.id == proposed.id:
-                    # The ledger write already happened on an earlier pass; only
-                    # the link append lost its race. Minting again would refuse
-                    # the claim as a duplicate of our own. Recheck the exact
-                    # created version before following its current head: only
-                    # provenance may have changed while the link lost its race.
-                    self._attach_source(link, created)
-                    claim_ref = self.claims.head(created.id).ref
-                else:
-                    ledger = self.claims.snapshot()
-                    if any(i.id == proposed.id for i in ledger.current(ProjectItem)):
-                        raise LinkError(f"shared claim {proposed.id} already exists; propose a link to it instead")
-                    claim_item = proposed.model_copy(update={"artifacts": tuple(dict.fromkeys((*proposed.artifacts, source_artifact_ref(link))))})
-                    self.claims.add_claim(ProjectItem.model_validate(claim_item.model_dump(mode="json")), expected_revision=ledger.revision)
-                    created = claim_ref = self.claims.head(proposed.id).ref
-            else:
-                self._attach_source(link, claim_ref)
-                claim_ref = self.claims.head(claim_ref.id).ref
+            claim_ref, created = self._claim_for_admission(link, claim_ref, proposed, created)
             admitted = link.model_copy(update={
                 "claim": claim_ref, "proposed_claim": None, "interpretation_target": target, "interpretation_sha256": interpretation_sha256, "candidates": link.candidates, "faithfulness": verdict, "approval": approval,
                 "status": LinkStatus.ADMITTED, "at": _stamp(),
@@ -317,6 +326,32 @@ class ClaimLinker:
             except StaleRevision:
                 continue
         raise LinkError("the link journal kept moving; try again")
+
+    def _claim_for_admission(self, link: SourceClaimLink, claim_ref: VersionRef | None,
+                             proposed: ProjectItem | None, created: VersionRef | None
+                             ) -> tuple[VersionRef, VersionRef | None]:
+        """Mint at most once across link retries, or attach provenance to an exact claim."""
+        if claim_ref is None:
+            assert proposed is not None
+            if created is not None and created.id == proposed.id:
+                # The ledger write already happened on an earlier pass; only
+                # the link append lost its race. Minting again would refuse
+                # the claim as a duplicate of our own. Recheck the exact
+                # created version before following its current head: only
+                # provenance may have changed while the link lost its race.
+                self._attach_source(link, created)
+                claim_ref = self.claims.head(created.id).ref
+            else:
+                ledger = self.claims.snapshot()
+                if any(i.id == proposed.id for i in ledger.current(ProjectItem)):
+                    raise LinkError(f"shared claim {proposed.id} already exists; propose a link to it instead")
+                claim_item = proposed.model_copy(update={"artifacts": tuple(dict.fromkeys((*proposed.artifacts, source_artifact_ref(link))))})
+                self.claims.add_claim(ProjectItem.model_validate(claim_item.model_dump(mode="json")), expected_revision=ledger.revision)
+                created = claim_ref = self.claims.head(proposed.id).ref
+        else:
+            self._attach_source(link, claim_ref)
+            claim_ref = self.claims.head(claim_ref.id).ref
+        return claim_ref, created
 
     def _chosen(self, link: SourceClaimLink, choose: VersionRef | Literal["proposed"] | None) -> tuple[VersionRef | None, ProjectItem | None]:
         if link.status is LinkStatus.AMBIGUOUS:
