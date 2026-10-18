@@ -71,31 +71,47 @@ def _scopes(text: str, tokens: Mapping[int, int]) -> list[tuple[int, tuple[str, 
         after = tokens[start]
         if word != "mutual" and position < len(starts):
             following = starts[position]
-            candidate = text[following : tokens[following]]
-            gap = text[after:following]
-            adjacent = not gap.strip() and (
-                "\n" not in gap or _column(text, following) > _column(text, start)
-            )
-            if adjacent and (
-                word == "namespace"
-                or (word == "end" and _names_open_scope(scope, candidate))
-                or candidate not in NOT_A_SCOPE_NAME
-            ):
-                name = candidate
+            name = _scope_name(text, tokens, start, following, scope)
+            if name is not None:
                 after = tokens[following]
                 position += 1
-        if word == "namespace":
-            if name is not None:
-                scope.extend(("namespace", part) for part in _components(name))
-        elif word in {"section", "mutual"}:
-            scope.append((word, name))
-        elif name is None:
-            if scope:
-                scope.pop()
-        else:
-            _close(scope, name)
+        _apply_scope(scope, word, name)
         marks.append((after, tuple(item for kind, item in scope if kind == "namespace" and item)))
     return marks
+
+
+def _scope_name(
+    text: str, tokens: Mapping[int, int], start: int, following: int,
+    scope: list[tuple[str, str | None]],
+) -> str | None:
+    """The following identifier when Lean can read it as this command's name."""
+    word = text[start : tokens[start]]
+    candidate = text[following : tokens[following]]
+    gap = text[tokens[start]:following]
+    adjacent = not gap.strip() and (
+        "\n" not in gap or _column(text, following) > _column(text, start)
+    )
+    if adjacent and (
+        word == "namespace"
+        or (word == "end" and _names_open_scope(scope, candidate))
+        or candidate not in NOT_A_SCOPE_NAME
+    ):
+        return candidate
+    return None
+
+
+def _apply_scope(scope: list[tuple[str, str | None]], word: str, name: str | None) -> None:
+    """Apply one namespace, section, mutual or end command to the open scopes."""
+    if word == "namespace":
+        if name is not None:
+            scope.extend(("namespace", part) for part in _components(name))
+    elif word in {"section", "mutual"}:
+        scope.append((word, name))
+    elif name is None:
+        if scope:
+            scope.pop()
+    else:
+        _close(scope, name)
 
 
 def _names_open_scope(scope: list[tuple[str, str | None]], name: str) -> bool:
