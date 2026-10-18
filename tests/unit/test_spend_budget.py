@@ -468,7 +468,9 @@ def test_an_explicit_rate_or_overload_rejection_settles_at_zero(tmp_path, budget
     module = budget_module
     owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote() + 10))
     client = Client([Rejected(status), usage()])
-    provider = AnthropicProvider("fixture", client=client, max_tokens=10, spend_budget=owner)
+    # Exercise the provider's status after admission, independent of journal latency.
+    provider = AnthropicProvider("fixture", client=client, max_tokens=10, spend_budget=owner,
+        clock=lambda: 0.0)
     with pytest.raises(Rejected):
         provider.complete(system="", messages=[], specs=[], timeout=0.5)
     settled = [json.loads(line)["payload"] for line in owner.path.read_text().splitlines()
@@ -485,7 +487,9 @@ def test_any_other_status_failure_is_charged_at_its_reservation(tmp_path, budget
     module = budget_module
     owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote() + 10))
     client = Client([Rejected(status), usage()])
-    provider = AnthropicProvider("fixture", client=client, max_tokens=10, spend_budget=owner)
+    # Exercise the provider's status after admission, independent of journal latency.
+    provider = AnthropicProvider("fixture", client=client, max_tokens=10, spend_budget=owner,
+        clock=lambda: 0.0)
     with pytest.raises(Rejected):
         provider.complete(system="", messages=[], specs=[], timeout=0.5)
     with pytest.raises(module.SpendLimitReached, match="token_limit"):
