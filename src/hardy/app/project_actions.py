@@ -102,6 +102,16 @@ _READS = {"workflow-status", "intake-status", "referee-report", "catalog"}
 PROJECT_VERBS = frozenset({*_LEGACY, *_NESTED, *_READS, "intake", "intake-review", "referee", "bundle", "referee-export", "action"})
 LONG_ACTIONS = frozenset({"research", "explore", "repair", "intake", "referee", "admission-gates", "publish", "bundle"})
 
+# The compact command grammar: field names determine both arity and binding.
+# Structured JSON requests still go directly through their strict owner model.
+_POSITIONALS = {
+    "target": ("identity", "statement"), "review": ("target", "translation"),
+    "bind": ("target", "translation"), "inspect": ("target",), "export": ("target",),
+    "publish": ("item",), "link": ("source", "kind", "target"), "mark": ("item", "visibility"),
+    "research": ("id", "target"), "repair": ("id", "obligation"), "explore": ("id",),
+    "intake": ("id",), "referee": ("id",),
+}
+
 
 def action_model(operation: str) -> type[BaseModel]:
     if operation in _LEGACY:
@@ -229,80 +239,92 @@ def _options(parts: list[str]) -> dict[str, str]:
     return {key[2:].replace("-", "_"): value for key, value in zip(parts[::2], parts[1::2], strict=True)}
 
 
+def _structured_action(tail: str, project: str) -> Action:
+    operation, _, raw = tail.strip().partition(" ")
+    # JSON is parsed directly, preserving mathematical quotes/backslashes.
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1]
+    try:
+        request = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid structured project request: {error.msg}") from error
+    if not isinstance(request, dict):
+        raise ValueError("A structured project request must be a JSON object.")
+    data = {"operation": operation, "project": project}
+    if operation in _LEGACY or operation in _READS:
+        _reject_reserved(request)
+    data.update(request if operation in _LEGACY or operation in _READS else {"request": request})
+    return validate_action(data)
+
+
+def _intake_options(request: dict[str, Any]) -> None:
+    source = request.pop("source", "")
+    if "@" not in source:
+        raise ValueError("Intake requires --source PATH@FULL_SHA256 and --scope-id ID.")
+    path, digest = source.rsplit("@", 1)
+    selected = {"path": path, "digest": digest}
+    if "retained" in request:
+        selected["retained"] = _exact(request.pop("retained"))
+    request["sources"] = [selected]
+    if "target_papers" in request:
+        request["target_papers"] = request["target_papers"].split(",")
+    if "citation_depth" in request:
+        request["citation_depth"] = int(request["citation_depth"])
+
+
+def _referee_options(request: dict[str, Any]) -> None:
+    if "main" in request:
+        request["main_results"] = request.pop("main")
+    if "internal" in request:
+        request["required_internal"] = request.pop("internal")
+    for key in ("main_results", "required_internal", "original", "repaired"):
+        if key in request:
+            request[key] = [_exact(value) for value in request[key].split(",")]
+    for key in ("review", "scope"):
+        if key in request:
+            request[key] = _exact(request[key])
+    for key in ("citation_depth", "citation_max_nodes"):
+        if key in request:
+            request[key] = int(request[key])
+
+
+def _workflow_request(verb: str, positional: list[str], options: dict[str, str]) -> dict[str, Any]:
+    request: dict[str, Any] = {"id": positional[0], **options}
+    # Preserve the compact grammar's precedence: --id may replace the first
+    # positional, while an explicit positional target/obligation wins.
+    request.update(zip(_POSITIONALS[verb][1:], positional[1:], strict=True))
+    if verb == "repair" and "original" in request:
+        request["original_argument"] = request.pop("original")
+    if verb == "intake":
+        _intake_options(request)
+    elif verb == "referee":
+        _referee_options(request)
+    return request
+
+
 def parse_action_command(argument: str, *, project: str) -> Action:
+    """Bind the compact or JSON grammar to the same strict project action."""
     verb, _, tail = argument.strip().partition(" ")
     if verb == "action":
-        operation, _, raw = tail.strip().partition(" ")
-        # JSON is parsed directly, preserving mathematical quotes/backslashes.
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
-            raw = raw[1:-1]
-        try:
-            request = json.loads(raw)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"Invalid structured project request: {error.msg}") from error
-        if not isinstance(request, dict):
-            raise ValueError("A structured project request must be a JSON object.")
-        data = {"operation": operation, "project": project}
-        if operation in _LEGACY or operation in _READS:
-            _reject_reserved(request)
-        data.update(request if operation in _LEGACY or operation in _READS else {"request": request})
-        return validate_action(data)
+        return _structured_action(tail, project)
     words = [user_prompts.unquoted(word) for word in shlex.split(tail, posix=False)]
     data = {"operation": verb, "project": project}
-    counts = {"target": 2, "review": 2, "bind": 2, "inspect": 1, "export": 1,
-              "publish": 1, "link": 3, "mark": 2, "research": 2, "repair": 2,
-              "explore": 1, "intake": 1, "referee": 1}
     if verb in _READS:
         if len(words) > 1:
             raise ValueError("Status operations take at most one record ID.")
         if words:
             data["id"] = words[0]
         return validate_action(data)
-    count = counts.get(verb)
-    if count is None or len(words) < count:
+    names = _POSITIONALS.get(verb)
+    if names is None or len(words) < len(names):
         raise ValueError("Use /project action OPERATION JSON for structured project requests.")
+    count = len(names)
     positional, options = words[:count], _options(words[count:])
     if verb in _LEGACY:
         _reject_reserved(options)
-        names = {"target": ("identity", "statement"), "review": ("target", "translation"),
-                 "bind": ("target", "translation"), "inspect": ("target",), "export": ("target",),
-                 "publish": ("item",), "link": ("source", "kind", "target"), "mark": ("item", "visibility")}[verb]
         return validate_action({**data, **dict(zip(names, positional, strict=True)), **options})
-    request: dict[str, Any] = {"id": positional[0], **options}
-    if verb == "research":
-        request["target"] = positional[1]
-    if verb == "repair":
-        request["obligation"] = positional[1]
-        if "original" in request:
-            request["original_argument"] = request.pop("original")
-    if verb == "intake":
-        source = request.pop("source", "")
-        if "@" not in source:
-            raise ValueError("Intake requires --source PATH@FULL_SHA256 and --scope-id ID.")
-        path, digest = source.rsplit("@", 1)
-        selected = {"path": path, "digest": digest}
-        if "retained" in request:
-            selected["retained"] = _exact(request.pop("retained"))
-        request["sources"] = [selected]
-        if "target_papers" in request:
-            request["target_papers"] = request["target_papers"].split(",")
-        if "citation_depth" in request:
-            request["citation_depth"] = int(request["citation_depth"])
-        return validate_action({**data, "request": request})
-    if verb == "referee":
-        if "main" in request:
-            request["main_results"] = request.pop("main")
-        if "internal" in request:
-            request["required_internal"] = request.pop("internal")
-        for key in ("main_results", "required_internal", "original", "repaired"):
-            if key in request:
-                request[key] = [_exact(value) for value in request[key].split(",")]
-        for key in ("review", "scope"):
-            if key in request:
-                request[key] = _exact(request[key])
-        for key in ("citation_depth", "citation_max_nodes"):
-            if key in request:
-                request[key] = int(request[key])
+    request = _workflow_request(verb, positional, options)
+    if verb in {"intake", "referee"}:
         return validate_action({**data, "request": request})
     for key in ("target", "scope", "context", "obligation", "original_argument", "concept", "use_site"):
         if key in request:
